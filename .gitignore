@@ -37,3 +37,4 @@ venv/
 
 # Docker
 *.log
+.idea/*
