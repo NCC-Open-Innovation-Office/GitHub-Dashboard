@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitHub Org Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { darkMode: 'class' }
+  </script>
+  <style>
+    body { background: #0f172a; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #1e293b; }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    .spin { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .sort-arrow::after { content: '↕'; opacity: 0.3; margin-left: 4px; }
+    .sort-asc::after  { content: '↑'; opacity: 1; margin-left: 4px; }
+    .sort-desc::after { content: '↓'; opacity: 1; margin-left: 4px; }
+  </style>
+</head>
+<body class="dark min-h-screen text-slate-100">
+
+  <!-- ── Nav ── -->
+  <nav class="sticky top-0 z-10 border-b border-slate-700 bg-slate-900/95 backdrop-blur-sm">
+    <div class="mx-auto flex max-w-screen-2xl items-center justify-between px-6 py-3">
+      <div class="flex items-center gap-2 text-slate-300 font-semibold">
+        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        <span>Org Dashboard</span>
+        <span id="nav-org-name" class="text-slate-500 font-normal"></span>
+      </div>
+      <button id="refresh-all-btn"
+        class="flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-1.5 text-sm text-slate-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:opacity-40">
+        <svg id="refresh-all-icon" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+        Refresh All
+      </button>
+    </div>
+  </nav>
+
+  <main class="mx-auto max-w-screen-2xl space-y-5 px-6 py-6">
+
+    <!-- Org Header -->
+    <div id="org-header-section"></div>
+
+    <!-- Stats Grid -->
+    <div id="stats-grid" class="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6"></div>
+
+    <!-- Commit Activity -->
+    <div class="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Commit Activity — Last 26 Weeks</h2>
+        <button data-refresh="commits" class="refresh-btn rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-slate-200 transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+        </button>
+      </div>
+      <div id="commit-activity-content"><div class="loader py-12"></div></div>
+    </div>
+
+    <!-- Repos + Contributors -->
+    <div class="grid grid-cols-1 gap-5 xl:grid-cols-3">
+
+      <!-- Repo Table -->
+      <div class="xl:col-span-2 rounded-xl border border-slate-700 bg-slate-800/60 p-5">
+        <div class="mb-4 flex items-center justify-between">
+          <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Repositories</h2>
+          <button data-refresh="repos" class="refresh-btn rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-slate-200 transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+          </button>
+        </div>
+        <!-- Toolbar -->
+        <div class="mb-3 flex flex-wrap items-center gap-3">
+          <input id="repo-search" type="text" placeholder="Search repositories…"
+            class="flex-1 min-w-48 rounded-lg border border-slate-600 bg-slate-700 px-3 py-1.5 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <div id="repo-filter-btns" class="flex flex-wrap gap-2"></div>
+        </div>
+        <div id="repos-table-wrapper"><div class="loader py-12"></div></div>
+        <p id="repo-count-label" class="mt-2 text-xs text-slate-500"></p>
+      </div>
+
+      <!-- Contributors -->
+      <div class="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
+        <div class="mb-4 flex items-center justify-between">
+          <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Top Contributors</h2>
+          <button data-refresh="contributors" class="refresh-btn rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-slate-200 transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+          </button>
+        </div>
+        <div id="contributors-content"><div class="loader py-12"></div></div>
+      </div>
+    </div>
+
+    <!-- Activity Feed -->
+    <div class="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Recent Activity</h2>
+        <button data-refresh="activity" class="refresh-btn rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-slate-200 transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+        </button>
+      </div>
+      <div id="activity-content"><div class="loader py-12"></div></div>
+    </div>
+
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

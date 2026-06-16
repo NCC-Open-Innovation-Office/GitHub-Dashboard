@@ -17,3 +17,23 @@ _site/
 # Details at https://github.com/github/pages-gem/issues/768
 Gemfile.lock
 .vscode/*
+
+# Environment — never commit secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Static build artifacts (none currently — frontend is vanilla JS served directly)
+
+# Docker
+*.log
