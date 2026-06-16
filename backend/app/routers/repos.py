@@ -34,7 +34,7 @@ async def get_repos():
             else:
                 result["warning"] = "This organization appears to have no repositories visible to this token."
 
-        cache_set(cache_key, result, settings.cache_ttl_seconds)
+        cache_set(cache_key, result, settings.repos_cache_ttl_seconds)
         return result
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

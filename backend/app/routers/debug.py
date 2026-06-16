@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from ..cache import cache_info
 from ..config import settings
 from ..services import github_service
 
@@ -8,7 +9,7 @@ router = APIRouter()
 
 @router.get("")
 async def debug_info():
-    """Returns token scopes and basic connectivity info. Useful for diagnosing permission issues."""
+    """Returns token scopes, cache info, and basic connectivity info. Useful for diagnosing permission issues."""
     try:
         scopes = await github_service.get_token_scopes()
         org = await github_service.get_org_details(settings.github_org)
@@ -19,6 +20,7 @@ async def debug_info():
         return {
             "github_org": settings.github_org,
             "token_scopes": scopes,
+            "cache_info": cache_info(),
             "warnings": (
                 []
                 if has_repo_scope
@@ -35,3 +37,20 @@ async def debug_info():
         }
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get("/cache-stats")
+async def cache_stats():
+    """Returns detailed cache statistics"""
+    return cache_info()
+
+
+@router.post("/warm-cache")
+async def warm_cache():
+    """Manually trigger cache warming"""
+    from ..services import cache_warming
+    try:
+        await cache_warming.warm_cache_if_needed()
+        return {"status": "success", "message": "Cache warming completed", "cache_info": cache_info()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cache warming failed: {str(e)}")

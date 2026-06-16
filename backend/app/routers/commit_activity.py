@@ -16,7 +16,7 @@ async def get_commit_activity():
     try:
         repos = await github_service.get_org_repos(settings.github_org)
         activity = await github_service.get_commit_activity(settings.github_org, repos)
-        cache_set(cache_key, activity, settings.cache_ttl_seconds)
+        cache_set(cache_key, activity, settings.commit_activity_cache_ttl_seconds)
         return activity
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

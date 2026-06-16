@@ -26,7 +26,7 @@ async def get_contributors():
             "total_unique_contributors": len(contributors),
             "total_contributions": sum(c["contributions"] for c in contributors),
         }
-        cache_set(cache_key, result, settings.cache_ttl_seconds)
+        cache_set(cache_key, result, settings.contributors_cache_ttl_seconds)
         return result
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

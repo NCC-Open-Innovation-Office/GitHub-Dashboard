@@ -34,7 +34,7 @@ async def get_activity():
             _format_event(e) for e in events if e.get("type") in _INTERESTING
         ]
         result = {"events": filtered[:50], "total": len(filtered)}
-        cache_set(cache_key, result, _ACTIVITY_TTL)
+        cache_set(cache_key, result, settings.activity_cache_ttl_seconds)
         return result
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

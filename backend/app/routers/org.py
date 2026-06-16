@@ -16,7 +16,7 @@ async def get_org_overview():
     try:
         org_data, members = await _fetch_org_data()
         result = _build_result(org_data, members)
-        cache_set(cache_key, result, settings.cache_ttl_seconds)
+        cache_set(cache_key, result, settings.org_cache_ttl_seconds)
         return result
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
