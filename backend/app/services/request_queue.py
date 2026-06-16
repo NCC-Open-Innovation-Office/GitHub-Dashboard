@@ -26,17 +26,17 @@ class QueuedRequest:
     future: asyncio.Future = field(default_factory=lambda: asyncio.Future(), compare=False)
 
 class RequestQueue:
-    def __init__(self, limit: int = 1000, period: int = 900):
-        self.limit = limit          # 1000 requests
+    def __init__(self, limit: Optional[int] = None, period: int = 900):
+        self.limit = limit          # Optional internal limit
         self.period = period        # 15 minutes (900 seconds)
         self.queue: asyncio.PriorityQueue[QueuedRequest] = asyncio.PriorityQueue()
-        self.tokens = float(limit)
+        self.tokens = float(limit) if limit else 1.0
         self.last_update = time.monotonic()
         self._worker_task: Optional[asyncio.Task] = None
         
         # Adaptive throttling state
-        self.remaining = limit
-        self.reset_at = time.time() + period
+        self.remaining: Optional[int] = None
+        self.reset_at: float = time.time() + period
         
     async def add_request(
         self, 
@@ -56,6 +56,10 @@ class RequestQueue:
         return await req.future
 
     def _replenish_tokens(self):
+        if not self.limit:
+            self.tokens = 1.0
+            return
+
         now = time.monotonic()
         elapsed = now - self.last_update
         # Rate = limit / period per second
@@ -65,25 +69,28 @@ class RequestQueue:
 
     async def _worker(self):
         while True:
-            self._replenish_tokens()
+            # 1. Internal Rate Limiting (Optional)
+            if self.limit:
+                self._replenish_tokens()
+                if self.tokens < 1:
+                    wait_time = (1 - self.tokens) / (self.limit / self.period)
+                    await asyncio.sleep(max(0.1, wait_time))
+                    continue
             
-            if self.tokens < 1:
-                # Calculate sleep time until at least 1 token is available
-                wait_time = (1 - self.tokens) / (self.limit / self.period)
-                await asyncio.sleep(max(0.1, wait_time))
-                continue
-                
-            # Check for adaptive throttling from GitHub's actual rate limits
-            if self.remaining <= 10: # Safe margin
+            # 2. Adaptive Throttling (GitHub headers)
+            # If we know our remaining quota is very low, wait for reset
+            if self.remaining is not None and self.remaining <= 5:
                 now = time.time()
                 if now < self.reset_at:
-                    wait_time = self.reset_at - now
-                    logger.warning(f"Adaptive throttling: GitHub rate limit low. Waiting {wait_time:.2f}s")
-                    await asyncio.sleep(min(wait_time, 60)) # Don't sleep for too long in one go
+                    wait_time = self.reset_at - now + 1 # Add 1s buffer
+                    logger.warning(f"Adaptive throttling: GitHub rate limit exhausted. Waiting {wait_time:.2f}s")
+                    await asyncio.sleep(min(wait_time, 30)) # Wait in chunks
                     continue
 
+            # 3. Process Request
             req: QueuedRequest = await self.queue.get()
-            self.tokens -= 1
+            if self.limit:
+                self.tokens -= 1
             
             try:
                 result = await req.func(*req.args, **req.kwargs)
@@ -99,16 +106,25 @@ class RequestQueue:
                     req.future.set_exception(e)
             finally:
                 self.queue.task_done()
+                # Tiny breather to prevent tight-looping if no limit set
+                if not self.limit:
+                    await asyncio.sleep(0.01)
 
-    def _update_limits(self, headers: Dict[str, str]):
+    def _update_limits(self, headers: Any):
         # GitHub specific rate limit headers
         remaining = headers.get("X-RateLimit-Remaining")
         reset = headers.get("X-RateLimit-Reset")
         
         if remaining is not None:
-            self.remaining = int(remaining)
+            try:
+                self.remaining = int(remaining)
+            except (ValueError, TypeError):
+                pass
         if reset is not None:
-            self.reset_at = float(reset)
+            try:
+                self.reset_at = float(reset)
+            except (ValueError, TypeError):
+                pass
 
     def start(self):
         if self._worker_task is None:
@@ -126,12 +142,12 @@ class RequestQueue:
     def get_status(self):
         return {
             "queue_size": self.queue.qsize(),
-            "tokens_available": round(self.tokens, 2),
+            "tokens_available": round(self.tokens, 2) if self.limit else "unlimited",
             "github_remaining": self.remaining,
             "github_reset_at": self.reset_at,
             "limit": self.limit,
             "period": self.period
         }
 
-# Global request queue
-request_queue = RequestQueue()
+# Global request queue - default to no internal limit, relying on adaptive throttling
+request_queue = RequestQueue(limit=None)
