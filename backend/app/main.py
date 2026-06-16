@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .routers import activity, commit_activity, contributors, debug, org, repos
-from .services import cache_warming
+from .services import cache_warming, request_queue
 
 app = FastAPI(
     title="GitHub Dashboard API",
@@ -37,8 +37,11 @@ _cache_warming_task: asyncio.Task | None = None
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize cache warming on startup"""
+    """Initialize background tasks on startup"""
     global _cache_warming_task
+    # Start request queue worker
+    request_queue.request_queue.start()
+    
     # Start background cache warming task
     _cache_warming_task = asyncio.create_task(
         cache_warming.schedule_cache_warming(interval_seconds=900)  # Every 15 minutes
@@ -49,6 +52,10 @@ async def startup_event():
 async def shutdown_event():
     """Clean up background tasks on shutdown"""
     global _cache_warming_task
+    
+    # Stop request queue
+    await request_queue.request_queue.stop()
+    
     if _cache_warming_task and not _cache_warming_task.done():
         _cache_warming_task.cancel()
         try:

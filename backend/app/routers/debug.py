@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..cache import cache_info
 from ..config import settings
-from ..services import github_service
+from ..services import github_service, request_queue
 
 router = APIRouter()
 
@@ -21,6 +21,7 @@ async def debug_info():
             "github_org": settings.github_org,
             "token_scopes": scopes,
             "cache_info": cache_info(),
+            "request_queue": request_queue.request_queue.get_status(),
             "warnings": (
                 []
                 if has_repo_scope

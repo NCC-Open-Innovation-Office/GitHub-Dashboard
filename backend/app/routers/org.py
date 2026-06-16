@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from ..cache import cache_clear, cache_get, cache_set
 from ..config import settings
 from ..services import github_service
+from ..services.request_queue import Priority
 
 router = APIRouter()
 
@@ -14,7 +15,7 @@ async def get_org_overview():
         return cached
 
     try:
-        org_data, members = await _fetch_org_data()
+        org_data, members = await _fetch_org_data(priority=Priority.HIGH)
         result = _build_result(org_data, members)
         cache_set(cache_key, result, settings.org_cache_ttl_seconds)
         return result
@@ -28,12 +29,12 @@ async def refresh_org():
     return await get_org_overview()
 
 
-async def _fetch_org_data():
+async def _fetch_org_data(priority: Priority = Priority.HIGH):
     import asyncio
 
     return await asyncio.gather(
-        github_service.get_org_details(settings.github_org),
-        github_service.get_org_members(settings.github_org),
+        github_service.get_org_details(settings.github_org, priority=priority),
+        github_service.get_org_members(settings.github_org, priority=priority),
     )
 
 

@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from ..cache import cache_clear, cache_get, cache_set
 from ..config import settings
 from ..services import github_service
+from ..services.request_queue import Priority
 
 router = APIRouter()
 
@@ -29,7 +30,7 @@ async def get_activity():
         return cached
 
     try:
-        events = await github_service.get_org_events(settings.github_org)
+        events = await github_service.get_org_events(settings.github_org, priority=Priority.HIGH)
         filtered = [
             _format_event(e) for e in events if e.get("type") in _INTERESTING
         ]

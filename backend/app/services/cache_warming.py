@@ -2,31 +2,32 @@ import asyncio
 import logging
 from typing import Callable, Coroutine, Any
 
-from ..cache import cache_get, cache_set
+from ..cache import cache_get, cache_set, _expiry
 from ..config import settings
 from . import github_service
+from .request_queue import Priority
 
 logger = logging.getLogger(__name__)
 
 
-async def warm_cache_if_needed() -> None:
+async def warm_cache_if_needed(priority: Priority = Priority.LOW) -> None:
     """Warm the cache with frequently accessed data to reduce API calls"""
     try:
-        # Check if org data is cached, if not, fetch it
+        # Check if org data is cached or near expiry
         org_cache_key = f"org:{settings.github_org}"
-        if not cache_get(org_cache_key):
+        if _is_needs_refresh(org_cache_key):
             logger.info("Warming org cache...")
-            org_data = await github_service.get_org_details(settings.github_org)
-            members = await github_service.get_org_members(settings.github_org)
+            org_data = await github_service.get_org_details(settings.github_org, priority=priority)
+            members = await github_service.get_org_members(settings.github_org, priority=priority)
             from ..routers.org import _build_result
             result = _build_result(org_data, members)
             cache_set(org_cache_key, result, settings.org_cache_ttl_seconds)
             
-        # Check if repos data is cached, if not, fetch it
+        # Check if repos data is cached or near expiry
         repos_cache_key = f"repos:{settings.github_org}"
-        if not cache_get(repos_cache_key):
+        if _is_needs_refresh(repos_cache_key):
             logger.info("Warming repos cache...")
-            repos = await github_service.get_org_repos(settings.github_org)
+            repos = await github_service.get_org_repos(settings.github_org, priority=priority)
             from ..routers.repos import _build_result
             result = _build_result(repos)
             result["truncated"] = len(repos) >= settings.max_repos
@@ -38,15 +39,33 @@ async def warm_cache_if_needed() -> None:
         logger.warning(f"Cache warming failed: {e}")
 
 
+def _is_needs_refresh(key: str, threshold_seconds: int = 60) -> bool:
+    """Check if a cache item is missing or near expiry (within threshold)"""
+    from datetime import datetime, timezone
+    val = cache_get(key)
+    if val is None:
+        return True
+    
+    expiry = _expiry.get(key)
+    if expiry:
+        remaining = (expiry - datetime.now(tz=timezone.utc)).total_seconds()
+        return remaining < threshold_seconds
+    return True
+
+
 async def schedule_cache_warming(interval_seconds: int = 300) -> None:
-    """Schedule periodic cache warming"""
+    """Schedule periodic cache warming and intelligent refreshing"""
+    # Initial warming on startup
+    await warm_cache_if_needed(priority=Priority.MEDIUM)
+    
     while True:
         try:
-            await warm_cache_if_needed()
-            await asyncio.sleep(interval_seconds)
+            # Check for near-expiry items every 60 seconds
+            await warm_cache_if_needed(priority=Priority.LOW)
+            await asyncio.sleep(60) 
         except asyncio.CancelledError:
             logger.info("Cache warming scheduler cancelled")
             break
         except Exception as e:
             logger.error(f"Cache warming scheduler error: {e}")
-            await asyncio.sleep(60)  # Wait a minute before retrying
+            await asyncio.sleep(60)

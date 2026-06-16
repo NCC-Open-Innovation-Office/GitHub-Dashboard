@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from ..cache import cache_clear, cache_get, cache_set
 from ..config import settings
 from ..services import github_service
+from ..services.request_queue import Priority
 
 router = APIRouter()
 
@@ -14,12 +15,12 @@ async def get_contributors():
         return cached
 
     try:
-        repos = await github_service.get_org_repos(settings.github_org)
+        repos = await github_service.get_org_repos(settings.github_org, priority=Priority.HIGH)
         # Only pull contributor data from the most recently active non-archived repos
         # to avoid exhausting the GitHub API rate limit on large orgs.
         active_repos = [r for r in repos if not r.get("archived", False)][:150]
         contributors = await github_service.get_all_contributors(
-            settings.github_org, active_repos
+            settings.github_org, active_repos, priority=Priority.HIGH
         )
         result = {
             "contributors": contributors,

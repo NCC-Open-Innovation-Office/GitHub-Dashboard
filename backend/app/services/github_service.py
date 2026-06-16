@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from ..config import settings
+from .request_queue import request_queue, Priority
 
 BASE_URL = "https://api.github.com"
 _SEMAPHORE_LIMIT = 10  # concurrent requests for contributor fetching
@@ -39,6 +40,7 @@ async def _paginate(
     url: str,
     params: dict | None = None,
     max_items: int | None = None,
+    priority: Priority = Priority.HIGH,
 ) -> list[dict]:
     """Follow GitHub Link-header pagination and return results.
 
@@ -54,7 +56,9 @@ async def _paginate(
         if max_items and len(results) >= max_items:
             break
 
-        resp = await client.get(
+        resp = await request_queue.add_request(
+            priority,
+            client.get,
             next_url,
             headers=_headers(),
             params=params if first else None,
@@ -110,18 +114,18 @@ async def _paginate(
     return results[:max_items] if max_items else results
 
 
-async def get_token_scopes() -> list[str]:
+async def get_token_scopes(priority: Priority = Priority.HIGH) -> list[str]:
     """Return the OAuth scopes of the configured token.
     Uses /rate_limit — a free endpoint that returns X-OAuth-Scopes headers."""
     async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(f"{BASE_URL}/rate_limit", headers=_headers())
+        resp = await request_queue.add_request(priority, client.get, f"{BASE_URL}/rate_limit", headers=_headers())
         raw = resp.headers.get("X-OAuth-Scopes", "")
         return [s.strip() for s in raw.split(",") if s.strip()]
 
 
-async def get_org_details(org: str) -> dict:
+async def get_org_details(org: str, priority: Priority = Priority.HIGH) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(f"{BASE_URL}/orgs/{org}", headers=_headers())
+        resp = await request_queue.add_request(priority, client.get, f"{BASE_URL}/orgs/{org}", headers=_headers())
         if resp.status_code in (403, 429):
             try:
                 body = resp.json()
@@ -143,22 +147,24 @@ async def get_org_details(org: str) -> dict:
         return resp.json()
 
 
-async def get_org_members(org: str) -> list[dict]:
+async def get_org_members(org: str, priority: Priority = Priority.HIGH) -> list[dict]:
     async with httpx.AsyncClient(timeout=30.0) as client:
         return await _paginate(
             client,
             f"{BASE_URL}/orgs/{org}/members",
             {"per_page": 100, "role": "all"},
+            priority=priority,
         )
 
 
-async def get_org_repos(org: str) -> list[dict]:
+async def get_org_repos(org: str, priority: Priority = Priority.HIGH) -> list[dict]:
     async with httpx.AsyncClient(timeout=60.0) as client:
         return await _paginate(
             client,
             f"{BASE_URL}/orgs/{org}/repos",
             {"type": "all", "per_page": 100, "sort": "pushed"},
             max_items=settings.max_repos,
+            priority=priority,
         )
 
 
@@ -167,10 +173,13 @@ async def _fetch_repo_contributors(
     semaphore: asyncio.Semaphore,
     org: str,
     repo_name: str,
+    priority: Priority = Priority.HIGH,
 ) -> list[dict]:
     async with semaphore:
         try:
-            resp = await client.get(
+            resp = await request_queue.add_request(
+                priority,
+                client.get,
                 f"{BASE_URL}/repos/{org}/{repo_name}/contributors",
                 headers=_headers(),
                 params={"per_page": 100, "anon": "false"},
@@ -183,14 +192,14 @@ async def _fetch_repo_contributors(
             return []
 
 
-async def get_all_contributors(org: str, repos: list[dict]) -> list[dict]:
+async def get_all_contributors(org: str, repos: list[dict], priority: Priority = Priority.HIGH) -> list[dict]:
     """Aggregate contributor commit counts across every repository."""
     semaphore = asyncio.Semaphore(_SEMAPHORE_LIMIT)
     totals: dict[str, dict[str, Any]] = {}
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         tasks = [
-            _fetch_repo_contributors(client, semaphore, org, r["name"])
+            _fetch_repo_contributors(client, semaphore, org, r["name"], priority=priority)
             for r in repos
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -215,9 +224,11 @@ async def get_all_contributors(org: str, repos: list[dict]) -> list[dict]:
     return sorted(totals.values(), key=lambda x: x["contributions"], reverse=True)[:25]
 
 
-async def get_org_events(org: str) -> list[dict]:
+async def get_org_events(org: str, priority: Priority = Priority.HIGH) -> list[dict]:
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(
+        resp = await request_queue.add_request(
+            priority,
+            client.get,
             f"{BASE_URL}/orgs/{org}/events",
             headers=_headers(),
             params={"per_page": 100},
@@ -226,7 +237,7 @@ async def get_org_events(org: str) -> list[dict]:
         return resp.json()
 
 
-async def get_commit_activity(org: str, repos: list[dict]) -> dict:
+async def get_commit_activity(org: str, repos: list[dict], priority: Priority = Priority.HIGH) -> dict:
     """Return per-repo and aggregated weekly commit activity for the top repos."""
     top_repos = sorted(repos, key=lambda r: r.get("stargazers_count", 0), reverse=True)[
         :8
@@ -236,7 +247,9 @@ async def get_commit_activity(org: str, repos: list[dict]) -> dict:
     async def _fetch(client: httpx.AsyncClient, repo_name: str):
         async with semaphore:
             try:
-                resp = await client.get(
+                resp = await request_queue.add_request(
+                    priority,
+                    client.get,
                     f"{BASE_URL}/repos/{org}/{repo_name}/stats/commit_activity",
                     headers=_headers(),
                 )
