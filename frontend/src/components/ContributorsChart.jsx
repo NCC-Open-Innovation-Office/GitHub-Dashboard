@@ -40,7 +40,7 @@ function CustomTooltip({ active, payload }) {
 }
 
 export default function ContributorsChart({ data }) {
-  const top = data?.contributors?.slice(0, 15) ?? []
+  const top = data?.contributors?.slice(0, 25) ?? []
 
   if (!top.length) return null
 

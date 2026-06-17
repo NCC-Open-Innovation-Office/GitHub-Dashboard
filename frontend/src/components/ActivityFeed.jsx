@@ -42,7 +42,7 @@ function eventSummary(event) {
 }
 
 export default function ActivityFeed({ data }) {
-  const events = data?.events ?? []
+  const events = (data?.events ?? []).slice(0, 10)
 
   return (
     <div className="flex flex-col gap-3">

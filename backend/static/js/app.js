@@ -387,7 +387,7 @@ function renderContributorsChart(data) {
   const container = el('contributors-content')
   if (!container) return
 
-  const top = (data?.contributors || []).slice(0, 15)
+  const top = (data?.contributors || []).slice(0, 25)
   if (!top.length) {
     container.innerHTML = '<p class="text-sm text-slate-500">No contributor data available.</p>'
     return
@@ -550,7 +550,7 @@ function renderActivityFeed(data) {
   const container = el('activity-content')
   if (!container) return
 
-  const events = data?.events || []
+  const events = (data?.events || []).slice(0, 10)
   if (!events.length) {
     container.innerHTML = '<p class="text-sm text-slate-500">No recent activity found.</p>'
     return
@@ -608,17 +608,20 @@ async function loadRepos() {
     state.allRepos = data.repos || []
     renderRepoFilterBtns()
 
+    const warningNode = el('repo-warning')
+    if (warningNode) {
+      warningNode.innerHTML = data.warning ? warningHTML(data.warning) : ''
+    }
+
     if (data.warning) {
-      const wrapper = el('repos-table-wrapper')
-      if (wrapper) wrapper.innerHTML = warningHTML(data.warning)
       const label = el('repo-count-label')
       if (label) label.textContent = ''
-    } else {
-      renderRepoTable()
-      if (data.truncated) {
-        const label = el('repo-count-label')
-        if (label) label.textContent += `  ·  Showing most recently pushed ${data.max_repos} of ${data.total}+ repos. Set MAX_REPOS in .env to increase.`
-      }
+    }
+
+    renderRepoTable()
+    if (data.truncated) {
+      const label = el('repo-count-label')
+      if (label) label.textContent += `  ·  Showing most recently pushed ${data.max_repos} of ${data.total}+ repos. Set MAX_REPOS in .env to increase.`
     }
 
     renderStats(state.org, data)
