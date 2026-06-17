@@ -174,23 +174,22 @@ function renderStats(org, repos) {
   const privateCount = repos ? (repos.private || 0) + (repos.internal || 0) : null
 
   const cards = [
-    { label: 'Followers',        value: org?.followers,         icon: '👥', border: 'border-indigo-700/40' },
-    { label: 'Members',          value: org?.member_count,      icon: '🧑‍💻', border: 'border-violet-700/40' },
-    { label: 'Repositories',     value: repos?.total,           icon: '📁',
+    { label: 'Followers',        value: org?.followers },
+    { label: 'Members',          value: org?.member_count },
+    { label: 'Repositories',     value: repos?.total,
       sub: repos ? `${repos.public} public · ${privateCount} private/internal` : '',
-      border: 'border-blue-700/40' },
-    { label: 'Total Stars',      value: repos?.total_stars,     icon: '⭐', border: 'border-yellow-700/40' },
-    { label: 'Open Issues',      value: repos?.total_open_issues, icon: '🐛', border: 'border-red-700/40' },
-    { label: 'Private/Internal', value: privateCount,           icon: '🔒',
+    },
+    { label: 'Total Stars',      value: repos?.total_stars },
+    { label: 'Open Issues',      value: repos?.total_open_issues },
+    { label: 'Private/Internal', value: privateCount,
       sub: repos ? `${repos.archived || 0} archived` : '',
-      border: 'border-emerald-700/40' },
+    },
   ]
 
   grid.innerHTML = cards.map(c => `
-    <div class="rounded-xl border ${c.border} bg-slate-800 p-5">
+    <div class="rounded-xl border border-slate-700 bg-slate-800 p-5">
       <div class="flex items-center justify-between">
         <span class="text-sm font-medium text-slate-400">${c.label}</span>
-        <span class="text-xl opacity-70">${c.icon}</span>
       </div>
       <p class="mt-2 text-3xl font-bold text-white">${c.value != null ? num(c.value) : '—'}</p>
       ${c.sub ? `<p class="mt-1 text-xs text-slate-400">${esc(c.sub)}</p>` : ''}
