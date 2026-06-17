@@ -45,7 +45,7 @@ export default function ContributorsChart({ data }) {
   if (!top.length) return null
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex h-full min-h-0 flex-col gap-3">
       <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
         Top Contributors
       </h2>
@@ -53,7 +53,7 @@ export default function ContributorsChart({ data }) {
         {data.total_unique_contributors} unique contributors ·{' '}
         {data.total_contributions?.toLocaleString()} total contributions (across all repos)
       </div>
-      <ResponsiveContainer width="100%" height={300}>
+      <ResponsiveContainer width="100%" height="100%">
         <BarChart
           data={top}
           layout="vertical"

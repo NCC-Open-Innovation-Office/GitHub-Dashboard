@@ -251,7 +251,7 @@ export default function App() {
                   error={contributors.error}
                   onRefresh={() => contributors.reload(refreshContributors)}
                   refreshing={contributors.loading}
-                  className="shrink-0"
+                  className="flex flex-col"
                   highlighted={focusedTvSection === 'contributors'}
                 >
                   <ContributorsChart data={contributors.data} />

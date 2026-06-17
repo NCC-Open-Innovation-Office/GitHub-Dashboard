@@ -394,10 +394,14 @@ function renderContributorsChart(data) {
   }
 
   container.innerHTML = `
-    <div class="mb-2 text-xs text-slate-500">
-      ${num(data.total_unique_contributors)} contributors · ${num(data.total_contributions)} total contributions
-    </div>
-    <canvas id="contributors-chart" height="320"></canvas>`
+    <div class="flex h-full min-h-0 flex-col gap-3">
+      <div class="mb-2 text-xs text-slate-500">
+        ${num(data.total_unique_contributors)} contributors · ${num(data.total_contributions)} total contributions
+      </div>
+      <div class="flex-1 min-h-[360px]">
+        <canvas id="contributors-chart"></canvas>
+      </div>
+    </div>`
 
   if (state.charts.contributors) {
     state.charts.contributors.destroy()
@@ -420,6 +424,7 @@ function renderContributorsChart(data) {
     options: {
       indexAxis: 'y',
       responsive: true,
+      maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
         tooltip: {
