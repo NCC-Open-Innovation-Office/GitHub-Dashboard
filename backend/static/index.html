@@ -18,9 +18,55 @@
     .sort-arrow::after { content: '↕'; opacity: 0.3; margin-left: 4px; }
     .sort-asc::after  { content: '↑'; opacity: 1; margin-left: 4px; }
     .sort-desc::after { content: '↓'; opacity: 1; margin-left: 4px; }
+    .tv-mode { background: radial-gradient(circle at 20% 20%, #1e293b 0%, #020617 65%); }
+    .tv-mode #page-shell {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    .tv-mode #tv-frame {
+      width: min(calc(100vw - 2rem), calc((100vh - 2rem) * 16 / 9));
+      height: min(calc(100vh - 2rem), calc((100vw - 2rem) * 9 / 16));
+      border: 1px solid #334155;
+      border-radius: 14px;
+      background: #0f172a;
+      box-shadow: 0 24px 60px rgba(2, 6, 23, 0.5);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .tv-mode nav { position: static; }
+    .tv-mode footer { display: none; }
+    .tv-mode #org-header-section { display: none; }
+    .tv-mode #dashboard-main {
+      max-width: none;
+      flex: 1;
+      width: 100%;
+      padding: 1rem;
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+      grid-template-rows: auto auto minmax(0, 1fr);
+      gap: 1rem;
+      overflow: hidden;
+    }
+    .tv-mode #stats-section { grid-column: 1 / span 2; grid-row: 1; }
+    .tv-mode #commit-section { grid-column: 1; grid-row: 2; }
+    .tv-mode #repos-section { grid-column: 1; grid-row: 3; min-height: 0; }
+    .tv-mode #contributors-section { grid-column: 2; grid-row: 2; }
+    .tv-mode #activity-section { grid-column: 2; grid-row: 3; min-height: 0; }
+    .tv-mode .tv-scroll { min-height: 0; overflow: auto; }
+    .tv-mode .tv-focus {
+      box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.35), 0 12px 30px rgba(15, 23, 42, 0.6);
+      border-color: rgba(99, 102, 241, 0.8);
+    }
   </style>
 </head>
 <body class="dark min-h-screen text-slate-100">
+
+  <div id="page-shell">
+  <div id="tv-frame">
 
   <!-- ── Nav ── -->
   <nav class="sticky top-0 z-10 border-b border-slate-700 bg-slate-900/95 backdrop-blur-sm">
@@ -32,19 +78,24 @@
         <span>Org Dashboard</span>
         <span id="nav-org-name" class="text-slate-500 font-normal"></span>
       </div>
+      <div class="flex items-center gap-3">
+        <span id="tv-focus-indicator" class="hidden rounded-md border border-indigo-700/70 bg-indigo-950/40 px-2 py-1 text-xs font-medium uppercase tracking-wider text-indigo-300"></span>
+      </div>
     </div>
   </nav>
 
-  <main class="mx-auto max-w-screen-2xl space-y-5 px-6 py-6">
+  <main id="dashboard-main" class="mx-auto max-w-screen-2xl space-y-5 px-6 py-6">
 
     <!-- Org Header -->
     <div id="org-header-section"></div>
 
     <!-- Stats Grid -->
-    <div id="stats-grid" class="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6"></div>
+    <div id="stats-section">
+      <div id="stats-grid" class="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6"></div>
+    </div>
 
     <!-- Commit Activity -->
-    <div class="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
+    <div id="commit-section" class="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
       <div class="mb-4 flex items-center justify-between">
         <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Commit Activity — Last 26 Weeks</h2>
       </div>
@@ -52,10 +103,10 @@
     </div>
 
     <!-- Repos + Contributors -->
-    <div class="grid grid-cols-1 gap-5 xl:grid-cols-3">
+    <div class="contents xl:grid xl:grid-cols-3 xl:gap-5">
 
       <!-- Repo Table -->
-      <div class="xl:col-span-2 rounded-xl border border-slate-700 bg-slate-800/60 p-5">
+      <div id="repos-section" class="xl:col-span-2 rounded-xl border border-slate-700 bg-slate-800/60 p-5">
         <div class="mb-4 flex items-center justify-between">
           <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Repositories</h2>
         </div>
@@ -65,12 +116,13 @@
             class="flex-1 min-w-48 rounded-lg border border-slate-600 bg-slate-700 px-3 py-1.5 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           <div id="repo-filter-btns" class="flex flex-wrap gap-2"></div>
         </div>
-        <div id="repos-table-wrapper"><div class="loader py-12"></div></div>
+        <div id="repos-table-wrapper" class="tv-scroll"><div class="loader py-12"></div></div>
         <p id="repo-count-label" class="mt-2 text-xs text-slate-500"></p>
+        <div id="repo-more-controls" class="mt-2 flex items-center gap-2"></div>
       </div>
 
       <!-- Contributors -->
-      <div class="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
+      <div id="contributors-section" class="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
         <div class="mb-4 flex items-center justify-between">
           <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Top Contributors</h2>
         </div>
@@ -79,7 +131,7 @@
     </div>
 
     <!-- Activity Feed -->
-    <div class="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
+    <div id="activity-section" class="rounded-xl border border-slate-700 bg-slate-800/60 p-5 tv-scroll">
       <div class="mb-4 flex items-center justify-between">
         <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Recent Activity</h2>
       </div>
@@ -101,5 +153,8 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="/static/js/app.js?v=20260616a"></script>
+
+  </div>
+  </div>
 </body>
 </html>

@@ -10,6 +10,8 @@ const state = {
   contributors: null,
   activity: null,
   commitActivity: null,
+  isTvMode: window.location.pathname.startsWith('/tv'),
+  repoVisibleCount: 10,
   // UI
   repoSearch: '',
   repoFilter: 'all',
@@ -17,6 +19,11 @@ const state = {
   // Chart.js instances (destroyed on refresh)
   charts: { contributors: null, commits: null },
 }
+
+const DEFAULT_VISIBLE_REPOS = 10
+const SHOW_MORE_STEP = 10
+const TV_ROTATION_MS = 30000
+const TV_SECTION_ORDER = ['stats', 'commit', 'repos', 'contributors', 'activity']
 
 const pendingRefreshes = new Set()
 
@@ -57,6 +64,12 @@ function esc(str) {
 }
 
 function el(id) { return document.getElementById(id) }
+
+function repoForkIconHTML() {
+  return `<svg viewBox="0 0 16 16" aria-hidden="true" class="inline-block h-3.5 w-3.5 text-emerald-400 align-[-0.125em]" fill="currentColor">
+    <path d="M5 3.25a2.25 2.25 0 1 0-1.5 2.122v5.256a2.251 2.251 0 1 0 1.5 0V8.372A2.251 2.251 0 0 0 6.5 6.25V5h3v1.25a2.251 2.251 0 0 0 1.5 2.122v2.256a2.251 2.251 0 1 0 1.5 0V8.372A2.25 2.25 0 1 0 9.5 6.25V3.5h-4.5v-.128A2.248 2.248 0 0 0 5 3.25Zm-2.25 0a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0Zm8.5 9.5a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0Zm-8.5 0a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0ZM11 6.25a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0Z" />
+  </svg>`
+}
 
 // ── API ───────────────────────────────────────────────────────────────────────
 
@@ -278,6 +291,8 @@ function renderRepoTable() {
   if (!wrapper) return
 
   const rows = getFilteredRepos()
+  const visibleRows = rows.slice(0, state.repoVisibleCount)
+  const hiddenCount = Math.max(rows.length - visibleRows.length, 0)
 
   wrapper.innerHTML = `
     <div class="overflow-x-auto rounded-xl border border-slate-700">
@@ -295,7 +310,7 @@ function renderRepoTable() {
         <tbody>
           ${rows.length === 0
             ? `<tr><td colspan="6" class="py-10 text-center text-slate-500">No repositories match your filter.</td></tr>`
-            : rows.map(r => `
+            : visibleRows.map(r => `
               <tr class="border-b border-slate-700/50 hover:bg-slate-700/30 transition-colors">
                 <td class="px-4 py-3">
                   <div class="flex flex-col gap-1">
@@ -314,9 +329,9 @@ function renderRepoTable() {
                   </div>
                 </td>
                 <td class="px-4 py-3 text-slate-300">${r.language ? esc(r.language) : '<span class="text-slate-600">—</span>'}</td>
-                <td class="px-4 py-3 text-right text-slate-300">⭐ ${num(r.stars)}</td>
-                <td class="px-4 py-3 text-right text-slate-300">🍴 ${num(r.forks)}</td>
-                <td class="px-4 py-3 text-right text-slate-300">🐛 ${num(r.open_issues)}</td>
+                <td class="px-4 py-3 text-right text-slate-300">${num(r.stars)}</td>
+                <td class="px-4 py-3 text-right text-slate-300"><span class="inline-flex items-center gap-1">${repoForkIconHTML()} ${num(r.forks)}</span></td>
+                <td class="px-4 py-3 text-right text-slate-300">${num(r.open_issues)}</td>
                 <td class="px-4 py-3 text-right text-xs text-slate-400">${timeAgo(r.pushed_at)}</td>
               </tr>`).join('')
           }
@@ -325,7 +340,45 @@ function renderRepoTable() {
     </div>`
 
   const label = el('repo-count-label')
-  if (label) label.textContent = `Showing ${rows.length} of ${state.allRepos.length} repositories`
+  if (label) label.textContent = `Showing ${visibleRows.length} of ${rows.length} matching repositories`
+
+  const controls = el('repo-more-controls')
+  if (controls) {
+    controls.innerHTML = `${hiddenCount > 0
+      ? `<button data-repo-action="show-more" class="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-slate-500 hover:text-slate-100">Show ${Math.min(SHOW_MORE_STEP, hiddenCount)} more</button>`
+      : ''}
+      ${state.repoVisibleCount > DEFAULT_VISIBLE_REPOS
+        ? `<button data-repo-action="reset-visible" class="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200">Reset</button>`
+        : ''}`
+  }
+}
+
+function resetRepoVisibleCount() {
+  state.repoVisibleCount = DEFAULT_VISIBLE_REPOS
+}
+
+function applyTvMode() {
+  if (!state.isTvMode) return
+
+  document.body.classList.add('tv-mode')
+  const indicator = el('tv-focus-indicator')
+  if (indicator) indicator.classList.remove('hidden')
+
+  const focusSection = (sectionKey) => {
+    TV_SECTION_ORDER.forEach((key) => {
+      const section = el(`${key}-section`)
+      if (!section) return
+      section.classList.toggle('tv-focus', key === sectionKey)
+    })
+    if (indicator) indicator.textContent = `Auto focus: ${sectionKey}`
+  }
+
+  let focusIndex = 0
+  focusSection(TV_SECTION_ORDER[focusIndex])
+  window.setInterval(() => {
+    focusIndex = (focusIndex + 1) % TV_SECTION_ORDER.length
+    focusSection(TV_SECTION_ORDER[focusIndex])
+  }, TV_ROTATION_MS)
 }
 
 // ── Contributors Chart ────────────────────────────────────────────────────────
@@ -653,6 +706,7 @@ document.addEventListener('click', e => {
   const filterBtn = e.target.closest('[data-filter]')
   if (filterBtn) {
     state.repoFilter = filterBtn.dataset.filter
+    resetRepoVisibleCount()
     renderRepoFilterBtns()
     renderRepoTable()
     return
@@ -668,8 +722,20 @@ document.addEventListener('click', e => {
       state.repoSort.field = field
       state.repoSort.dir = 'desc'
     }
+    resetRepoVisibleCount()
     renderRepoTable()
     return
+  }
+
+  const repoActionBtn = e.target.closest('[data-repo-action]')
+  if (repoActionBtn) {
+    if (repoActionBtn.dataset.repoAction === 'show-more') {
+      state.repoVisibleCount += SHOW_MORE_STEP
+    }
+    if (repoActionBtn.dataset.repoAction === 'reset-visible') {
+      resetRepoVisibleCount()
+    }
+    renderRepoTable()
   }
 
 })
@@ -678,6 +744,7 @@ document.addEventListener('click', e => {
 document.addEventListener('input', e => {
   if (e.target.id === 'repo-search') {
     state.repoSearch = e.target.value
+    resetRepoVisibleCount()
     renderRepoTable()
   }
 })
@@ -693,6 +760,7 @@ function configureChartDefaults() {
 
 async function init() {
   configureChartDefaults()
+  applyTvMode()
   // All sections load independently so one slow endpoint doesn't block others
   await Promise.allSettled([
     loadOrg(),

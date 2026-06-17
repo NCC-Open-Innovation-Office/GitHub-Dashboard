@@ -90,8 +90,19 @@ async def health_check():
 # Serve the vanilla JS frontend — must be registered AFTER all API routes
 _static_dir = Path(__file__).parent.parent / "static"
 
+
+def _serve_dashboard() -> FileResponse:
+    return FileResponse(_static_dir / "index.html")
+
+
 @app.get("/", include_in_schema=False)
 async def serve_index():
-    return FileResponse(_static_dir / "index.html")
+    return _serve_dashboard()
+
+
+@app.get("/tv", include_in_schema=False)
+@app.get("/tv/", include_in_schema=False)
+async def serve_tv():
+    return _serve_dashboard()
 
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
