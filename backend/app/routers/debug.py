@@ -71,6 +71,18 @@ async def cache_stats():
     return cache_info()
 
 
+@router.get("/repo-page-probe")
+async def repo_page_probe(next_url: str | None = Query(default=None)):
+    """Fetch exactly one repos page synchronously for diagnostics."""
+    try:
+        return await github_service.probe_org_repos_page(
+            settings.github_org,
+            next_url=next_url,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @router.post("/warm-cache")
 async def warm_cache():
     """Manually trigger cache warming"""

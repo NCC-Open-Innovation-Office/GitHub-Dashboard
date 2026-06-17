@@ -75,6 +75,9 @@ def _ensure_status(key: str) -> dict[str, Any]:
             "last_success_at": None,
             "last_error": None,
             "run_count": 0,
+            "heartbeat_at": None,
+            "current_step": None,
+            "current_detail": None,
         },
     )
 
@@ -108,6 +111,26 @@ def get_repo_progress(org: str) -> dict[str, Any]:
     return _repo_progress(org)
 
 
+def _mark_job_step(key: str, step: str, detail: str | None = None) -> None:
+    status = _ensure_status(key)
+    status["current_step"] = step
+    status["current_detail"] = detail
+    status["heartbeat_at"] = _now_iso()
+
+
+def _mark_job_error(key: str, message: str) -> None:
+    status = _ensure_status(key)
+    status["last_error"] = message
+    status["heartbeat_at"] = _now_iso()
+
+
+def _mark_job_success(key: str, detail: str | None = None) -> None:
+    status = _ensure_status(key)
+    status["current_step"] = "completed"
+    status["current_detail"] = detail
+    status["heartbeat_at"] = _now_iso()
+
+
 async def _delayed_enqueue(func: Callable[..., None], *args: Any) -> None:
     await asyncio.sleep(0)
     func(*args)
@@ -130,6 +153,7 @@ def queue_length() -> int:
 
 
 async def _refresh_org_repos(org: str, priority: Any = None) -> list[dict]:
+    job_key = f"repos:{org}"
     existing_repos = cache_get(f"raw_repos:{org}") or []
     progress = _repo_progress(org)
     next_url = progress.get("next_url")
@@ -138,16 +162,34 @@ async def _refresh_org_repos(org: str, priority: Any = None) -> list[dict]:
     repos = list(existing_repos)
     page_count = 0
     while len(repos) < settings.max_repos and page_count < REPO_PAGES_PER_JOB:
-        page, next_url = await get_org_repos_page(
-            org,
-            next_url=next_url,
-            priority=priority,
+        _mark_job_step(
+            job_key,
+            "fetching_repo_page",
+            (
+                f"page_batch_index={page_count + 1}, "
+                f"fetched_repos={len(repos)}, "
+                f"has_next_url={bool(next_url)}"
+            ),
         )
+        try:
+            page, next_url = await get_org_repos_page(
+                org,
+                next_url=next_url,
+                priority=priority,
+            )
+        except Exception as exc:
+            _mark_job_error(job_key, str(exc))
+            raise
         if not page:
             complete = True
             break
         repos.extend(page)
         page_count += 1
+        _mark_job_step(
+            job_key,
+            "repo_page_fetched",
+            f"page_size={len(page)}, fetched_repos={len(repos)}",
+        )
         if next_url is None:
             complete = True
             break
@@ -186,6 +228,10 @@ async def _refresh_org_repos(org: str, priority: Any = None) -> list[dict]:
     asyncio.create_task(_delayed_enqueue(enqueue_commit_activity, org))
     if not complete and next_url:
         asyncio.create_task(_delayed_enqueue(enqueue_org_repos, org))
+    _mark_job_success(
+        job_key,
+        f"fetched_repos={len(repos)}, scan_complete={complete}",
+    )
     return repos
 
 
@@ -380,6 +426,8 @@ def get_queue_status() -> dict[str, Any]:
 
 
 async def _refresh_org_overview(org: str) -> dict:
+    job_key = f"org:{org}"
+    _mark_job_step(job_key, "fetching_org_overview")
     org_data = await get_org_details(org)
     members = await get_org_members(org)
 
@@ -389,10 +437,13 @@ async def _refresh_org_overview(org: str) -> dict:
     result["is_placeholder"] = False
     result["refreshed_at"] = _now_iso()
     cache_set(f"org:{org}", result, settings.org_cache_ttl_seconds)
+    _mark_job_success(job_key, "org overview cached")
     return result
 
 
 async def _refresh_activity(org: str) -> dict:
+    job_key = f"activity:{org}"
+    _mark_job_step(job_key, "fetching_activity")
     events = await get_org_events(org)
     interesting = {
         "PushEvent",
@@ -479,15 +530,23 @@ async def _refresh_activity(org: str) -> dict:
         "refreshed_at": _now_iso(),
     }
     cache_set(f"activity:{org}", result, settings.activity_cache_ttl_seconds)
+    _mark_job_success(job_key, f"events={len(formatted[:50])}")
     return result
 
 
 async def _refresh_contributors(org: str) -> dict:
+    job_key = f"contributors:{org}"
+    _mark_job_step(job_key, "loading_repo_sample")
     repos = await _get_or_refresh_raw_repos(org)
     progress = _repo_progress(org)
     active_repos = [
         repo for repo in repos if not repo.get("archived", False)
     ][:CONTRIBUTOR_REPO_SAMPLE]
+    _mark_job_step(
+        job_key,
+        "fetching_contributors",
+        f"repo_sample_size={len(active_repos)}",
+    )
     contributors = await get_all_contributors(org, active_repos)
     complete = bool(progress.get("complete", False))
     result = {
@@ -512,10 +571,16 @@ async def _refresh_contributors(org: str) -> dict:
         result,
         settings.contributors_cache_ttl_seconds,
     )
+    _mark_job_success(
+        job_key,
+        f"contributors={len(contributors)}, repo_scan_complete={complete}",
+    )
     return result
 
 
 async def _refresh_commit_activity(org: str) -> dict:
+    job_key = f"commit_activity:{org}"
+    _mark_job_step(job_key, "loading_repo_sample")
     repos = await _get_or_refresh_raw_repos(org)
     progress = _repo_progress(org)
     sample_repos = sorted(
@@ -523,6 +588,11 @@ async def _refresh_commit_activity(org: str) -> dict:
         key=lambda repo: repo.get("pushed_at") or "",
         reverse=True,
     )[:COMMIT_ACTIVITY_REPO_SAMPLE]
+    _mark_job_step(
+        job_key,
+        "fetching_commit_activity",
+        f"repo_sample_size={len(sample_repos)}",
+    )
     result = await get_commit_activity(org, sample_repos)
     complete = bool(progress.get("complete", False))
     result["repo_sample_size"] = len(sample_repos)
@@ -539,5 +609,9 @@ async def _refresh_commit_activity(org: str) -> dict:
         f"commit_activity:{org}",
         result,
         settings.commit_activity_cache_ttl_seconds,
+    )
+    _mark_job_success(
+        job_key,
+        f"repo_sample_size={len(sample_repos)}, repo_scan_complete={complete}",
     )
     return result

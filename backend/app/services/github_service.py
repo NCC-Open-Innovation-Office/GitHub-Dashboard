@@ -9,6 +9,7 @@ from .request_queue import request_queue, Priority
 
 BASE_URL = "https://api.github.com"
 _SEMAPHORE_LIMIT = 10  # concurrent requests for contributor fetching
+_REPO_PAGE_TIMEOUT_SECONDS = 45
 
 
 def _is_bot_login(login: str | None) -> bool:
@@ -185,21 +186,54 @@ async def get_org_repos_page(
 ) -> tuple[list[dict], str | None]:
     async with httpx.AsyncClient(timeout=60.0) as client:
         url = next_url or f"{BASE_URL}/orgs/{org}/repos"
-        resp = await request_queue.add_request(
-            priority,
-            client.get,
-            url,
-            headers=_headers(),
-            params=None
-            if next_url
-            else {"type": "all", "per_page": 100, "sort": "pushed"},
-        )
+        try:
+            resp = await asyncio.wait_for(
+                request_queue.add_request(
+                    priority,
+                    client.get,
+                    url,
+                    headers=_headers(),
+                    params=None
+                    if next_url
+                    else {"type": "all", "per_page": 100, "sort": "pushed"},
+                ),
+                timeout=_REPO_PAGE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(
+                f"Timed out fetching a repo page after {_REPO_PAGE_TIMEOUT_SECONDS} seconds"
+            ) from exc
         resp.raise_for_status()
         data = resp.json()
         if not isinstance(data, list):
             return [], None
         await asyncio.sleep(0.05)
         return data, _next_link(resp.headers.get("Link", ""))
+
+
+async def probe_org_repos_page(
+    org: str,
+    next_url: str | None = None,
+    priority: Priority = Priority.HIGH,
+) -> dict[str, Any]:
+    started_at = datetime.now(tz=timezone.utc)
+    page, next_link = await get_org_repos_page(
+        org,
+        next_url=next_url,
+        priority=priority,
+    )
+    finished_at = datetime.now(tz=timezone.utc)
+    return {
+        "count": len(page),
+        "next_url": next_link,
+        "sample_repo_names": [repo.get("name") for repo in page[:10]],
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "duration_seconds": round(
+            (finished_at - started_at).total_seconds(),
+            3,
+        ),
+    }
 
 
 async def _fetch_repo_contributors(
