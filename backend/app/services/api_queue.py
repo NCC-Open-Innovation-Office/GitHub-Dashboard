@@ -7,6 +7,7 @@ from typing import Any, Callable, Coroutine
 
 from ..cache import cache_get, cache_set
 from ..config import settings
+from .request_queue import Priority
 from .github_service import (
     get_all_contributors,
     get_commit_activity,
@@ -196,6 +197,11 @@ def _cache_repo_snapshot(
 
 
 async def _refresh_org_repos(org: str, priority: Any = None) -> list[dict]:
+    effective_priority = (
+        priority
+        if isinstance(priority, Priority)
+        else Priority.MEDIUM
+    )
     job_key = f"repos:{org}"
     existing_repos = cache_get(f"raw_repos:{org}") or []
     progress = _repo_progress(org)
@@ -218,7 +224,7 @@ async def _refresh_org_repos(org: str, priority: Any = None) -> list[dict]:
             page, next_url = await get_org_repos_page(
                 org,
                 next_url=next_url,
-                priority=priority,
+                priority=effective_priority,
             )
         except Exception as exc:
             _mark_job_error(job_key, str(exc))
@@ -275,7 +281,7 @@ async def _get_or_refresh_raw_repos(org: str) -> list[dict]:
 
     if cached := cache_get(f"raw_repos:{org}"):
         return cached
-    return await _refresh_org_repos(org)
+    return await _refresh_org_repos(org, priority=Priority.MEDIUM)
 
 
 async def _process_batch() -> None:
