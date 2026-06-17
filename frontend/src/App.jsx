@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { FiRefreshCw, FiGithub } from 'react-icons/fi'
 import {
   getOrg,
@@ -20,6 +20,9 @@ import CommitActivity from './components/CommitActivity'
 import ActivityFeed from './components/ActivityFeed'
 import LoadingSpinner from './components/LoadingSpinner'
 import ErrorBanner from './components/ErrorBanner'
+
+const TV_SECTION_ORDER = ['stats', 'commit', 'repos', 'contributors', 'activity']
+const TV_ROTATION_MS = 30000
 
 function useRemoteData(fetchFn) {
   const [data, setData] = useState(null)
@@ -59,9 +62,22 @@ function useRemoteData(fetchFn) {
   return { data, loading, error, reload }
 }
 
-function Section({ title, loading, error, children, onRefresh, refreshing }) {
+function Section({
+  title,
+  loading,
+  error,
+  children,
+  onRefresh,
+  refreshing,
+  className = '',
+  highlighted = false,
+}) {
+  const sectionTone = highlighted
+    ? 'ring-2 ring-indigo-500/70 shadow-[0_0_0_1px_rgba(99,102,241,0.35),0_12px_30px_rgba(15,23,42,0.6)]'
+    : ''
+
   return (
-    <div className="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
+    <div className={`rounded-xl border border-slate-700 bg-slate-800/60 p-5 transition-all duration-500 ${sectionTone} ${className}`}>
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
           {title}
@@ -89,6 +105,8 @@ function Section({ title, loading, error, children, onRefresh, refreshing }) {
 }
 
 export default function App() {
+  const isTvMode = useMemo(() => window.location.pathname.startsWith('/tv'), [])
+  const [tvFocusIndex, setTvFocusIndex] = useState(0)
   const org = useRemoteData(getOrg)
   const repos = useRemoteData(getRepos)
   const contributors = useRemoteData(getContributors)
@@ -151,6 +169,111 @@ export default function App() {
       commitActivity.reload(refreshCommitActivity),
     ])
     setGlobalRefreshing(false)
+  }
+
+  useEffect(() => {
+    if (!isTvMode) {
+      return
+    }
+
+    const intervalId = setInterval(() => {
+      setTvFocusIndex((index) => (index + 1) % TV_SECTION_ORDER.length)
+    }, TV_ROTATION_MS)
+
+    return () => clearInterval(intervalId)
+  }, [isTvMode])
+
+  const pageTitle = org.data ? `Org Dashboard / ${org.data.login}` : 'Org Dashboard'
+  const focusedTvSection = TV_SECTION_ORDER[tvFocusIndex]
+
+  if (isTvMode) {
+    return (
+      <div className="tv-page">
+        <div className="tv-frame">
+          <div className="tv-canvas">
+            <header className="mb-4 flex items-center justify-between rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-3">
+              <div className="flex items-center gap-2 text-slate-300">
+                <FiGithub className="text-xl" />
+                <span className="text-lg font-semibold">{pageTitle}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="rounded-md border border-indigo-700/70 bg-indigo-950/40 px-2 py-1 text-xs font-medium uppercase tracking-wider text-indigo-300">
+                  Auto focus: {focusedTvSection}
+                </span>
+                <button
+                  onClick={refreshAll}
+                  disabled={globalRefreshing}
+                  className="flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-40"
+                >
+                  <FiRefreshCw className={globalRefreshing ? 'animate-spin' : ''} />
+                  Refresh
+                </button>
+              </div>
+            </header>
+
+            <div className={`mb-4 rounded-xl transition-all duration-500 ${focusedTvSection === 'stats' ? 'ring-2 ring-indigo-500/70 shadow-[0_0_0_1px_rgba(99,102,241,0.35),0_12px_30px_rgba(15,23,42,0.6)]' : ''}`}>
+              <StatsGrid org={org.data} repos={repos.data} />
+            </div>
+
+            <div className="grid h-[calc(100%-190px)] grid-cols-12 gap-4 overflow-hidden">
+              <div className="col-span-8 flex flex-col gap-4 overflow-hidden">
+                {(commitActivity.data || commitActivity.loading || commitActivity.error) && (
+                  <Section
+                    title="Commit Activity"
+                    loading={commitActivity.loading}
+                    error={commitActivity.error}
+                    onRefresh={() => commitActivity.reload(refreshCommitActivity)}
+                    refreshing={commitActivity.loading}
+                    className="shrink-0"
+                    highlighted={focusedTvSection === 'commit'}
+                  >
+                    <CommitActivity data={commitActivity.data} />
+                  </Section>
+                )}
+
+                <Section
+                  title="Repositories"
+                  loading={repos.loading}
+                  error={repos.error}
+                  onRefresh={() => repos.reload(refreshRepos)}
+                  refreshing={repos.loading}
+                  className="min-h-0 flex-1 overflow-auto"
+                  highlighted={focusedTvSection === 'repos'}
+                >
+                  <RepoTable repos={repos.data?.repos} />
+                </Section>
+              </div>
+
+              <div className="col-span-4 flex flex-col gap-4 overflow-hidden">
+                <Section
+                  title="Top Contributors"
+                  loading={contributors.loading}
+                  error={contributors.error}
+                  onRefresh={() => contributors.reload(refreshContributors)}
+                  refreshing={contributors.loading}
+                  className="shrink-0"
+                  highlighted={focusedTvSection === 'contributors'}
+                >
+                  <ContributorsChart data={contributors.data} />
+                </Section>
+
+                <Section
+                  title="Recent Activity"
+                  loading={activity.loading}
+                  error={activity.error}
+                  onRefresh={() => activity.reload(refreshActivity)}
+                  refreshing={activity.loading}
+                  className="min-h-0 flex-1 overflow-auto"
+                  highlighted={focusedTvSection === 'activity'}
+                >
+                  <ActivityFeed data={activity.data} />
+                </Section>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (

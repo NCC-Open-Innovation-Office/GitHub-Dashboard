@@ -7,6 +7,32 @@ body {
   color: #f1f5f9;
 }
 
+.tv-page {
+  min-height: 100vh;
+  background: radial-gradient(circle at 20% 20%, #1e293b 0%, #020617 65%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.tv-frame {
+  width: min(100vw - 2rem, calc((100vh - 2rem) * 16 / 9));
+  height: min(100vh - 2rem, calc((100vw - 2rem) * 9 / 16));
+  border: 1px solid #334155;
+  border-radius: 14px;
+  background: #0f172a;
+  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.5);
+  overflow: hidden;
+}
+
+.tv-canvas {
+  width: 100%;
+  height: 100%;
+  padding: 1rem;
+  overflow: hidden;
+}
+
 /* Thin scrollbar for tables */
 ::-webkit-scrollbar {
   width: 6px;
