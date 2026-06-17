@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from datetime import datetime, timezone
 
-from ..cache import cache_get, cache_set
+from ..cache import cache_get_or_last_good, cache_set
 from ..config import settings
 from ..services import api_queue
 
@@ -11,7 +11,10 @@ router = APIRouter()
 @router.get("")
 async def get_commit_activity():
     cache_key = f"commit_activity:{settings.github_org}"
-    if cached := cache_get(cache_key):
+    if cached := cache_get_or_last_good(
+        cache_key,
+        "Commit activity is being refreshed in the background.",
+    ):
         return cached
 
     api_queue.enqueue_commit_activity(settings.github_org)

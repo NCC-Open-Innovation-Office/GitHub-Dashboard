@@ -78,8 +78,8 @@ class RequestQueue:
                     continue
             
             # 2. Adaptive Throttling (GitHub headers)
-            # If we know our remaining quota is very low, wait for reset
-            if self.remaining is not None and self.remaining <= 5:
+            # Only pause when quota is actually exhausted.
+            if self.remaining is not None and self.remaining <= 0:
                 now = time.time()
                 if now < self.reset_at:
                     wait_time = self.reset_at - now + 1 # Add 1s buffer

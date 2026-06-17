@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
-from ..cache import cache_get, cache_set
+from ..cache import cache_get_or_last_good, cache_set
 from ..config import settings
 from ..services import api_queue
 
@@ -20,7 +20,7 @@ async def get_repos():
     worker will populate the cache within the next 15‑minute batch window.
     """
     cache_key = f"repos:{settings.github_org}"
-    if cached := cache_get(cache_key):
+    if cached := cache_get_or_last_good(cache_key):
         return cached
 
     # Cache miss – enqueue a refresh and return a placeholder response.

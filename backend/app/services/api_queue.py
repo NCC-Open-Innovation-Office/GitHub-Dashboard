@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine
 
-from ..cache import cache_get, cache_set
+from ..cache import cache_get, cache_set, cache_set_last_good
 from ..config import settings
 from .request_queue import Priority
 from .github_service import (
@@ -185,6 +185,11 @@ def _cache_repo_snapshot(
 
     cache_set(f"raw_repos:{org}", repos, settings.repos_cache_ttl_seconds)
     cache_set(f"repos:{org}", result, settings.repos_cache_ttl_seconds)
+    cache_set_last_good(
+        f"repos:{org}",
+        result,
+        settings.repos_cache_ttl_seconds,
+    )
     _set_repo_progress(
         org,
         {
@@ -503,6 +508,11 @@ async def _refresh_org_overview(org: str) -> dict:
     result["is_placeholder"] = False
     result["refreshed_at"] = _now_iso()
     cache_set(f"org:{org}", result, settings.org_cache_ttl_seconds)
+    cache_set_last_good(
+        f"org:{org}",
+        result,
+        settings.org_cache_ttl_seconds,
+    )
     _mark_job_success(job_key, "org overview cached")
     return result
 
@@ -596,6 +606,11 @@ async def _refresh_activity(org: str) -> dict:
         "refreshed_at": _now_iso(),
     }
     cache_set(f"activity:{org}", result, settings.activity_cache_ttl_seconds)
+    cache_set_last_good(
+        f"activity:{org}",
+        result,
+        settings.activity_cache_ttl_seconds,
+    )
     _mark_job_success(job_key, f"events={len(formatted[:50])}")
     return result
 
@@ -637,6 +652,11 @@ async def _refresh_contributors(org: str) -> dict:
         result,
         settings.contributors_cache_ttl_seconds,
     )
+    cache_set_last_good(
+        f"contributors:{org}",
+        result,
+        settings.contributors_cache_ttl_seconds,
+    )
     _mark_job_success(
         job_key,
         f"contributors={len(contributors)}, repo_scan_complete={complete}",
@@ -672,6 +692,11 @@ async def _refresh_commit_activity(org: str) -> dict:
             "background refresh is continuing."
         )
     cache_set(
+        f"commit_activity:{org}",
+        result,
+        settings.commit_activity_cache_ttl_seconds,
+    )
+    cache_set_last_good(
         f"commit_activity:{org}",
         result,
         settings.commit_activity_cache_ttl_seconds,
