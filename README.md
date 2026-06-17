@@ -55,6 +55,31 @@ docker-compose -f docker-compose.dev.yml up --build
 
 The backend API will be available at [http://localhost:8000](http://localhost:8000).
 
+## Production Deployment
+
+The repository includes a GitHub Actions workflow that builds the backend image
+and pushes it to GitHub Container Registry as `ghcr.io/ncc-open-innovation-office/github-dashboard:latest`
+on every push to `main`.
+
+To deploy from the published image instead of rebuilding locally, use:
+
+```bash
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+```
+
+The production compose file uses the GHCR image directly and maps the app to
+`http://localhost:3000`.
+
+If your GHCR package is private, log in first:
+
+```bash
+docker login ghcr.io
+```
+
+You can also trigger the image build manually from the Actions tab using the
+`Build and Push Docker Image` workflow.
+
 ## Scripts & Development
 
 ### Backend (FastAPI)
@@ -79,6 +104,8 @@ The backend API will be available at [http://localhost:8000](http://localhost:80
 │   ├── src/            # Components and services
 │   └── index.html      # Main HTML entry
 ├── docker-compose.yml  # Production deployment
+├── docker-compose.prod.yml # Production deployment from GHCR
+├── .github/workflows/  # CI/CD workflows
 └── todo.md             # Project roadmap
 ```
 

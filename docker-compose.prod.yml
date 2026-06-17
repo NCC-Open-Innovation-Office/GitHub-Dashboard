@@ -1,0 +1,13 @@
+services:
+  app:
+    image: ghcr.io/ncc-open-innovation-office/github-dashboard:latest
+    pull_policy: always
+    env_file: .env
+    ports:
+      - "3000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
