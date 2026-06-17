@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Query
 from ..cache import cache_info
 from ..config import settings
 from ..services import api_queue, github_service, request_queue
+from ..services.api_queue import get_repo_progress
 
 router = APIRouter()
 
@@ -14,6 +15,7 @@ async def debug_info(include_github: bool = Query(default=False)):
         "github_org": settings.github_org,
         "cache_info": cache_info(),
         "api_queue": api_queue.get_queue_status(),
+        "repo_progress": get_repo_progress(settings.github_org),
         "request_queue": request_queue.request_queue.get_status(),
     }
 
@@ -58,6 +60,7 @@ async def queue_status():
         "github_org": settings.github_org,
         "cache_info": cache_info(),
         "api_queue": api_queue.get_queue_status(),
+        "repo_progress": get_repo_progress(settings.github_org),
         "request_queue": request_queue.request_queue.get_status(),
     }
 

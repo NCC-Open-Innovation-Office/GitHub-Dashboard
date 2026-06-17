@@ -13,7 +13,7 @@ from .github_service import (
     get_org_details,
     get_org_events,
     get_org_members,
-    get_org_repos,
+    get_org_repos_page,
 )
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 MAX_CALLS_PER_BATCH = 1000
 BATCH_INTERVAL = 15 * 60
 JOB_TIMEOUT_SECONDS = 30 * 60
+REPO_PAGES_PER_JOB = 5
+CONTRIBUTOR_REPO_SAMPLE = 150
+COMMIT_ACTIVITY_REPO_SAMPLE = 200
 
 
 @dataclass(order=True)
@@ -80,6 +83,36 @@ def _now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
 
+def _repo_progress_key(org: str) -> str:
+    return f"raw_repos_progress:{org}"
+
+
+def _repo_progress(org: str) -> dict[str, Any]:
+    return cache_get(_repo_progress_key(org)) or {
+        "next_url": None,
+        "complete": False,
+        "fetched_repos": 0,
+        "updated_at": None,
+    }
+
+
+def _set_repo_progress(org: str, progress: dict[str, Any]) -> None:
+    cache_set(
+        _repo_progress_key(org),
+        progress,
+        settings.repos_cache_ttl_seconds,
+    )
+
+
+def get_repo_progress(org: str) -> dict[str, Any]:
+    return _repo_progress(org)
+
+
+async def _delayed_enqueue(func: Callable[..., None], *args: Any) -> None:
+    await asyncio.sleep(0)
+    func(*args)
+
+
 def enqueue_unique(key: str, call: ApiCall) -> bool:
     """Enqueue a call once for a given key until it is executed."""
     if key in _enqueued_keys:
@@ -97,17 +130,62 @@ def queue_length() -> int:
 
 
 async def _refresh_org_repos(org: str, priority: Any = None) -> list[dict]:
-    repos = await get_org_repos(org, priority=priority)
+    existing_repos = cache_get(f"raw_repos:{org}") or []
+    progress = _repo_progress(org)
+    next_url = progress.get("next_url")
+    complete = bool(progress.get("complete", False))
+
+    repos = list(existing_repos)
+    page_count = 0
+    while len(repos) < settings.max_repos and page_count < REPO_PAGES_PER_JOB:
+        page, next_url = await get_org_repos_page(
+            org,
+            next_url=next_url,
+            priority=priority,
+        )
+        if not page:
+            complete = True
+            break
+        repos.extend(page)
+        page_count += 1
+        if next_url is None:
+            complete = True
+            break
+
+    repos = repos[:settings.max_repos]
+    if len(repos) >= settings.max_repos:
+        complete = True
 
     from ..routers.repos import _build_result
 
     result = _build_result(repos)
-    result["truncated"] = len(repos) >= settings.max_repos
+    result["truncated"] = not complete and len(repos) >= settings.max_repos
     result["max_repos"] = settings.max_repos
-    result["is_placeholder"] = False
+    result["is_placeholder"] = not complete
     result["refreshed_at"] = _now_iso()
+    result["fetched_repos"] = len(repos)
+    result["scan_complete"] = complete
+    if not complete:
+        result["warning"] = (
+            f"Repository data is partially populated from {len(repos)} repos; "
+            "background refresh is continuing."
+        )
     cache_set(f"raw_repos:{org}", repos, settings.repos_cache_ttl_seconds)
     cache_set(f"repos:{org}", result, settings.repos_cache_ttl_seconds)
+    _set_repo_progress(
+        org,
+        {
+            "next_url": next_url,
+            "complete": complete,
+            "fetched_repos": len(repos),
+            "updated_at": _now_iso(),
+        },
+    )
+
+    asyncio.create_task(_delayed_enqueue(enqueue_contributors, org))
+    asyncio.create_task(_delayed_enqueue(enqueue_commit_activity, org))
+    if not complete and next_url:
+        asyncio.create_task(_delayed_enqueue(enqueue_org_repos, org))
     return repos
 
 
@@ -406,17 +484,29 @@ async def _refresh_activity(org: str) -> dict:
 
 async def _refresh_contributors(org: str) -> dict:
     repos = await _get_or_refresh_raw_repos(org)
-    active_repos = [r for r in repos if not r.get("archived", False)][:150]
+    progress = _repo_progress(org)
+    active_repos = [
+        repo for repo in repos if not repo.get("archived", False)
+    ][:CONTRIBUTOR_REPO_SAMPLE]
     contributors = await get_all_contributors(org, active_repos)
+    complete = bool(progress.get("complete", False))
     result = {
         "contributors": contributors,
         "total_unique_contributors": len(contributors),
         "total_contributions": sum(
             c.get("contributions", 0) for c in contributors
         ),
-        "is_placeholder": False,
+        "repo_sample_size": len(active_repos),
+        "repo_scan_complete": complete,
+        "is_placeholder": not complete,
         "refreshed_at": _now_iso(),
     }
+    if not complete:
+        result["warning"] = (
+            "Contributor data is based on the first "
+            f"{len(active_repos)} active repos; "
+            "background refresh is continuing."
+        )
     cache_set(
         f"contributors:{org}",
         result,
@@ -427,9 +517,24 @@ async def _refresh_contributors(org: str) -> dict:
 
 async def _refresh_commit_activity(org: str) -> dict:
     repos = await _get_or_refresh_raw_repos(org)
-    result = await get_commit_activity(org, repos)
-    result["is_placeholder"] = False
+    progress = _repo_progress(org)
+    sample_repos = sorted(
+        repos,
+        key=lambda repo: repo.get("pushed_at") or "",
+        reverse=True,
+    )[:COMMIT_ACTIVITY_REPO_SAMPLE]
+    result = await get_commit_activity(org, sample_repos)
+    complete = bool(progress.get("complete", False))
+    result["repo_sample_size"] = len(sample_repos)
+    result["repo_scan_complete"] = complete
+    result["is_placeholder"] = not complete
     result["refreshed_at"] = _now_iso()
+    if not complete:
+        result["warning"] = (
+            "Commit activity is based on the first "
+            f"{len(sample_repos)} repos scanned; "
+            "background refresh is continuing."
+        )
     cache_set(
         f"commit_activity:{org}",
         result,

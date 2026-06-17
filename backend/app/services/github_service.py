@@ -41,6 +41,15 @@ def _headers() -> dict[str, str]:
     }
 
 
+def _next_link(link_header: str) -> str | None:
+    if 'rel="next"' not in link_header:
+        return None
+    for part in link_header.split(","):
+        if 'rel="next"' in part:
+            return part.split(";")[0].strip().strip("<>")
+    return None
+
+
 async def _paginate(
     client: httpx.AsyncClient,
     url: str,
@@ -110,12 +119,7 @@ async def _paginate(
 
         first = False
         next_url = None
-        link_header = resp.headers.get("Link", "")
-        if 'rel="next"' in link_header:
-            for part in link_header.split(","):
-                if 'rel="next"' in part:
-                    next_url = part.split(";")[0].strip().strip("<>")
-                    break
+        next_url = _next_link(resp.headers.get("Link", ""))
 
     return results[:max_items] if max_items else results
 
@@ -172,6 +176,30 @@ async def get_org_repos(org: str, priority: Priority = Priority.HIGH) -> list[di
             max_items=settings.max_repos,
             priority=priority,
         )
+
+
+async def get_org_repos_page(
+    org: str,
+    next_url: str | None = None,
+    priority: Priority = Priority.HIGH,
+) -> tuple[list[dict], str | None]:
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        url = next_url or f"{BASE_URL}/orgs/{org}/repos"
+        resp = await request_queue.add_request(
+            priority,
+            client.get,
+            url,
+            headers=_headers(),
+            params=None
+            if next_url
+            else {"type": "all", "per_page": 100, "sort": "pushed"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, list):
+            return [], None
+        await asyncio.sleep(0.05)
+        return data, _next_link(resp.headers.get("Link", ""))
 
 
 async def _fetch_repo_contributors(

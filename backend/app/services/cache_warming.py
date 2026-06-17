@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from ..cache import cache_get, cache_set, _expiry
 from ..config import settings
+from . import api_queue
 from . import github_service
 from .request_queue import Priority
 
@@ -38,28 +39,8 @@ async def warm_cache_if_needed(priority: Priority = Priority.LOW) -> None:
     # Check if repos data is cached or near expiry
     repos_cache_key = f"repos:{settings.github_org}"
     if _is_needs_refresh(repos_cache_key):
-        logger.info("Warming repos cache...")
-        repos = await github_service.get_org_repos(
-            settings.github_org,
-            priority=priority,
-        )
-        from ..routers.repos import _build_result as _build_repos_result
-
-        result = _build_repos_result(repos)
-        result["truncated"] = len(repos) >= settings.max_repos
-        result["max_repos"] = settings.max_repos
-        result["is_placeholder"] = False
-        result["refreshed_at"] = _now_iso()
-        cache_set(
-            f"raw_repos:{settings.github_org}",
-            repos,
-            settings.repos_cache_ttl_seconds,
-        )
-        cache_set(
-            repos_cache_key,
-            result,
-            settings.repos_cache_ttl_seconds,
-        )
+        logger.info("Queueing incremental repos refresh...")
+        api_queue.enqueue_org_repos(settings.github_org)
 
     logger.info("Cache warming completed successfully")
 
