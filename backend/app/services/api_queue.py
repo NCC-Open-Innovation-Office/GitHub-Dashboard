@@ -152,6 +152,40 @@ def queue_length() -> int:
     return len(_api_queue)
 
 
+def _cache_repo_snapshot(
+    org: str,
+    repos: list[dict],
+    next_url: str | None,
+    complete: bool,
+) -> None:
+    from ..routers.repos import _build_result
+
+    result = _build_result(repos)
+    result["truncated"] = not complete and len(repos) >= settings.max_repos
+    result["max_repos"] = settings.max_repos
+    result["is_placeholder"] = not complete
+    result["refreshed_at"] = _now_iso()
+    result["fetched_repos"] = len(repos)
+    result["scan_complete"] = complete
+    if not complete:
+        result["warning"] = (
+            f"Repository data is partially populated from {len(repos)} repos; "
+            "background refresh is continuing."
+        )
+
+    cache_set(f"raw_repos:{org}", repos, settings.repos_cache_ttl_seconds)
+    cache_set(f"repos:{org}", result, settings.repos_cache_ttl_seconds)
+    _set_repo_progress(
+        org,
+        {
+            "next_url": next_url,
+            "complete": complete,
+            "fetched_repos": len(repos),
+            "updated_at": _now_iso(),
+        },
+    )
+
+
 async def _refresh_org_repos(org: str, priority: Any = None) -> list[dict]:
     job_key = f"repos:{org}"
     existing_repos = cache_get(f"raw_repos:{org}") or []
@@ -190,6 +224,14 @@ async def _refresh_org_repos(org: str, priority: Any = None) -> list[dict]:
             "repo_page_fetched",
             f"page_size={len(page)}, fetched_repos={len(repos)}",
         )
+        _cache_repo_snapshot(
+            org,
+            repos[:settings.max_repos],
+            next_url,
+            False,
+        )
+        asyncio.create_task(_delayed_enqueue(enqueue_contributors, org))
+        asyncio.create_task(_delayed_enqueue(enqueue_commit_activity, org))
         if next_url is None:
             complete = True
             break
@@ -198,34 +240,8 @@ async def _refresh_org_repos(org: str, priority: Any = None) -> list[dict]:
     if len(repos) >= settings.max_repos:
         complete = True
 
-    from ..routers.repos import _build_result
+    _cache_repo_snapshot(org, repos, next_url, complete)
 
-    result = _build_result(repos)
-    result["truncated"] = not complete and len(repos) >= settings.max_repos
-    result["max_repos"] = settings.max_repos
-    result["is_placeholder"] = not complete
-    result["refreshed_at"] = _now_iso()
-    result["fetched_repos"] = len(repos)
-    result["scan_complete"] = complete
-    if not complete:
-        result["warning"] = (
-            f"Repository data is partially populated from {len(repos)} repos; "
-            "background refresh is continuing."
-        )
-    cache_set(f"raw_repos:{org}", repos, settings.repos_cache_ttl_seconds)
-    cache_set(f"repos:{org}", result, settings.repos_cache_ttl_seconds)
-    _set_repo_progress(
-        org,
-        {
-            "next_url": next_url,
-            "complete": complete,
-            "fetched_repos": len(repos),
-            "updated_at": _now_iso(),
-        },
-    )
-
-    asyncio.create_task(_delayed_enqueue(enqueue_contributors, org))
-    asyncio.create_task(_delayed_enqueue(enqueue_commit_activity, org))
     if not complete and next_url:
         asyncio.create_task(_delayed_enqueue(enqueue_org_repos, org))
     _mark_job_success(
