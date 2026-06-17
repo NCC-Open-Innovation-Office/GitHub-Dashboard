@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from ..cache import cache_info
 from ..config import settings
@@ -8,8 +8,18 @@ router = APIRouter()
 
 
 @router.get("")
-async def debug_info():
-    """Returns token scopes, cache info, and basic connectivity info. Useful for diagnosing permission issues."""
+async def debug_info(include_github: bool = Query(default=False)):
+    """Return cache and queue status, with optional GitHub diagnostics."""
+    basic = {
+        "github_org": settings.github_org,
+        "cache_info": cache_info(),
+        "api_queue": api_queue.get_queue_status(),
+        "request_queue": request_queue.request_queue.get_status(),
+    }
+
+    if not include_github:
+        return basic
+
     try:
         scopes = await github_service.get_token_scopes()
         org = await github_service.get_org_details(settings.github_org)
@@ -18,21 +28,17 @@ async def debug_info():
         has_repo_scope = any(s in ("repo", "public_repo") for s in scopes)
 
         return {
-            "github_org": settings.github_org,
+            **basic,
             "token_scopes": scopes,
-            "cache_info": cache_info(),
-            "api_queue": {
-                "queue_size": api_queue.queue_length(),
-                "batch_interval_seconds": api_queue.BATCH_INTERVAL,
-                "max_calls_per_batch": api_queue.MAX_CALLS_PER_BATCH,
-            },
-            "request_queue": request_queue.request_queue.get_status(),
             "warnings": (
                 []
                 if has_repo_scope
                 else [
-                    "Token is missing 'repo' scope. Private and internal repositories will NOT be listed. "
-                    "Add the 'repo' scope to your Personal Access Token."
+                    (
+                        "Token is missing 'repo' scope. "
+                        "Private/internal repositories will NOT be listed. "
+                        "Add the 'repo' scope to your Personal Access Token."
+                    )
                 ]
             ),
             "org_accessible": True,
@@ -45,6 +51,17 @@ async def debug_info():
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@router.get("/queue-status")
+async def queue_status():
+    """Lightweight queue and cache health endpoint."""
+    return {
+        "github_org": settings.github_org,
+        "cache_info": cache_info(),
+        "api_queue": api_queue.get_queue_status(),
+        "request_queue": request_queue.request_queue.get_status(),
+    }
+
+
 @router.get("/cache-stats")
 async def cache_stats():
     """Returns detailed cache statistics"""
@@ -55,8 +72,16 @@ async def cache_stats():
 async def warm_cache():
     """Manually trigger cache warming"""
     from ..services import cache_warming
+
     try:
         await cache_warming.warm_cache_if_needed()
-        return {"status": "success", "message": "Cache warming completed", "cache_info": cache_info()}
+        return {
+            "status": "success",
+            "message": "Cache warming completed",
+            "cache_info": cache_info(),
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Cache warming failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cache warming failed: {str(e)}",
+        ) from e

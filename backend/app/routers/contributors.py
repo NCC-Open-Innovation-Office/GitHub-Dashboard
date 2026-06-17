@@ -1,9 +1,9 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+from datetime import datetime, timezone
 
 from ..cache import cache_clear, cache_get, cache_set
 from ..config import settings
-from ..services import github_service
-from ..services.request_queue import Priority
+from ..services import api_queue
 
 router = APIRouter()
 
@@ -14,23 +14,17 @@ async def get_contributors():
     if cached := cache_get(cache_key):
         return cached
 
-    try:
-        repos = await github_service.get_org_repos(settings.github_org, priority=Priority.HIGH)
-        # Only pull contributor data from the most recently active non-archived repos
-        # to avoid exhausting the GitHub API rate limit on large orgs.
-        active_repos = [r for r in repos if not r.get("archived", False)][:150]
-        contributors = await github_service.get_all_contributors(
-            settings.github_org, active_repos, priority=Priority.HIGH
-        )
-        result = {
-            "contributors": contributors,
-            "total_unique_contributors": len(contributors),
-            "total_contributions": sum(c["contributions"] for c in contributors),
-        }
-        cache_set(cache_key, result, settings.contributors_cache_ttl_seconds)
-        return result
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    api_queue.enqueue_contributors(settings.github_org)
+    placeholder = {
+        "contributors": [],
+        "total_unique_contributors": 0,
+        "total_contributions": 0,
+        "warning": "Contributor data is being refreshed in the background.",
+        "is_placeholder": True,
+        "refreshed_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
+    cache_set(cache_key, placeholder, settings.contributors_cache_ttl_seconds)
+    return placeholder
 
 
 @router.post("/refresh")

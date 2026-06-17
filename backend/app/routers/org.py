@@ -1,9 +1,9 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+from datetime import datetime, timezone
 
 from ..cache import cache_clear, cache_get, cache_set
 from ..config import settings
-from ..services import github_service
-from ..services.request_queue import Priority
+from ..services import api_queue
 
 router = APIRouter()
 
@@ -14,28 +14,37 @@ async def get_org_overview():
     if cached := cache_get(cache_key):
         return cached
 
-    try:
-        org_data, members = await _fetch_org_data(priority=Priority.HIGH)
-        result = _build_result(org_data, members)
-        cache_set(cache_key, result, settings.org_cache_ttl_seconds)
-        return result
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    api_queue.enqueue_org_details(settings.github_org)
+
+    placeholder = {
+        "login": settings.github_org,
+        "name": settings.github_org,
+        "description": None,
+        "avatar_url": None,
+        "html_url": f"https://github.com/{settings.github_org}",
+        "blog": None,
+        "location": None,
+        "email": None,
+        "followers": 0,
+        "following": 0,
+        "public_repos": 0,
+        "total_private_repos": 0,
+        "owned_private_repos": 0,
+        "member_count": 0,
+        "created_at": None,
+        "updated_at": None,
+        "warning": "Organization data is being refreshed in the background.",
+        "is_placeholder": True,
+        "refreshed_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
+    cache_set(cache_key, placeholder, settings.org_cache_ttl_seconds)
+    return placeholder
 
 
 @router.post("/refresh")
 async def refresh_org():
     cache_clear(f"org:{settings.github_org}")
     return await get_org_overview()
-
-
-async def _fetch_org_data(priority: Priority = Priority.HIGH):
-    import asyncio
-
-    return await asyncio.gather(
-        github_service.get_org_details(settings.github_org, priority=priority),
-        github_service.get_org_members(settings.github_org, priority=priority),
-    )
 
 
 def _build_result(org_data: dict, members: list) -> dict:

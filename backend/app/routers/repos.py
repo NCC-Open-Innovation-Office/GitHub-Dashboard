@@ -1,12 +1,11 @@
 from collections import Counter
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from ..cache import cache_clear, cache_get, cache_set
 from ..config import settings
-from ..services import github_service
 from ..services import api_queue
-from ..services.request_queue import Priority
 
 router = APIRouter()
 
@@ -32,9 +31,19 @@ async def get_repos():
     placeholder = {
         "repos": [],
         "total": 0,
+        "public": 0,
+        "private": 0,
+        "internal": 0,
+        "archived": 0,
+        "total_stars": 0,
+        "total_forks": 0,
+        "total_open_issues": 0,
+        "languages": {},
         "truncated": False,
         "max_repos": settings.max_repos,
         "warning": "Repository data is being refreshed in the background.",
+        "is_placeholder": True,
+        "refreshed_at": datetime.now(tz=timezone.utc).isoformat(),
     }
     cache_set(cache_key, placeholder, settings.repos_cache_ttl_seconds)
     return placeholder

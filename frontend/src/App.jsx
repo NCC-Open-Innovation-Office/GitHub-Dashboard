@@ -27,8 +27,11 @@ function useRemoteData(fetchFn) {
   const [error, setError] = useState(null)
 
   const load = useCallback(
-    async (fn) => {
-      setLoading(true)
+    async (fn, options = {}) => {
+      const silent = options.silent === true
+      if (!silent) {
+        setLoading(true)
+      }
       setError(null)
       try {
         const res = await fn()
@@ -36,7 +39,9 @@ function useRemoteData(fetchFn) {
       } catch (err) {
         setError(err?.response?.data?.detail ?? err.message ?? 'Unknown error')
       } finally {
-        setLoading(false)
+        if (!silent) {
+          setLoading(false)
+        }
       }
     },
     [],
@@ -44,9 +49,14 @@ function useRemoteData(fetchFn) {
 
   useEffect(() => {
     load(fetchFn)
-  }, [])
+  }, [load, fetchFn])
 
-  return { data, loading, error, reload: (refreshFn) => load(refreshFn) }
+  const reload = useCallback(
+    (nextFn = fetchFn, options = {}) => load(nextFn, options),
+    [load, fetchFn],
+  )
+
+  return { data, loading, error, reload }
 }
 
 function Section({ title, loading, error, children, onRefresh, refreshing }) {
@@ -86,6 +96,50 @@ export default function App() {
   const commitActivity = useRemoteData(getCommitActivity)
 
   const [globalRefreshing, setGlobalRefreshing] = useState(false)
+
+  useEffect(() => {
+    const pollables = [
+      { state: org, fetch: getOrg },
+      { state: repos, fetch: getRepos },
+      { state: contributors, fetch: getContributors },
+      { state: activity, fetch: getActivity },
+      { state: commitActivity, fetch: getCommitActivity },
+    ]
+
+    const shouldPoll = pollables.some(
+      ({ state }) => state.data?.is_placeholder && !state.loading,
+    )
+
+    if (!shouldPoll) {
+      return
+    }
+
+    const intervalId = setInterval(() => {
+      pollables.forEach(({ state, fetch }) => {
+        if (state.data?.is_placeholder && !state.loading) {
+          state.reload(fetch, { silent: true })
+        }
+      })
+    }, 15000)
+
+    return () => clearInterval(intervalId)
+  }, [
+    org.data?.is_placeholder,
+    org.loading,
+    org.reload,
+    repos.data?.is_placeholder,
+    repos.loading,
+    repos.reload,
+    contributors.data?.is_placeholder,
+    contributors.loading,
+    contributors.reload,
+    activity.data?.is_placeholder,
+    activity.loading,
+    activity.reload,
+    commitActivity.data?.is_placeholder,
+    commitActivity.loading,
+    commitActivity.reload,
+  ])
 
   const refreshAll = async () => {
     setGlobalRefreshing(true)

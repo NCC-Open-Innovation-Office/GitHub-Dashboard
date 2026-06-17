@@ -1,9 +1,9 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+from datetime import datetime, timezone
 
 from ..cache import cache_clear, cache_get, cache_set
 from ..config import settings
-from ..services import github_service
-from ..services.request_queue import Priority
+from ..services import api_queue
 
 router = APIRouter()
 
@@ -19,9 +19,6 @@ _INTERESTING = {
     "DeleteEvent",
 }
 
-# Activity feed uses a short TTL so it stays fresh
-_ACTIVITY_TTL = 120
-
 
 @router.get("")
 async def get_activity():
@@ -29,16 +26,16 @@ async def get_activity():
     if cached := cache_get(cache_key):
         return cached
 
-    try:
-        events = await github_service.get_org_events(settings.github_org, priority=Priority.HIGH)
-        filtered = [
-            _format_event(e) for e in events if e.get("type") in _INTERESTING
-        ]
-        result = {"events": filtered[:50], "total": len(filtered)}
-        cache_set(cache_key, result, settings.activity_cache_ttl_seconds)
-        return result
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    api_queue.enqueue_org_events(settings.github_org)
+    placeholder = {
+        "events": [],
+        "total": 0,
+        "warning": "Activity data is being refreshed in the background.",
+        "is_placeholder": True,
+        "refreshed_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
+    cache_set(cache_key, placeholder, settings.activity_cache_ttl_seconds)
+    return placeholder
 
 
 @router.post("/refresh")
@@ -107,3 +104,10 @@ def _extract_payload(event: dict) -> dict:
         forkee = payload.get("forkee", {})
         return {"forkee": forkee.get("full_name", "")}
     return {}
+
+
+def _build_result(events: list[dict]) -> dict:
+    filtered = [
+        _format_event(e) for e in events if e.get("type") in _INTERESTING
+    ]
+    return {"events": filtered[:50], "total": len(filtered)}
