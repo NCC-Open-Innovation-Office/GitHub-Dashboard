@@ -11,6 +11,12 @@ BASE_URL = "https://api.github.com"
 _SEMAPHORE_LIMIT = 10  # concurrent requests for contributor fetching
 
 
+def _is_bot_login(login: str | None) -> bool:
+    if not login:
+        return False
+    return "[bot]" in login.lower()
+
+
 def _rate_limit_message(resp: httpx.Response) -> str:
     reset_ts = resp.headers.get("X-RateLimit-Reset")
     if reset_ts:
@@ -209,7 +215,7 @@ async def get_all_contributors(org: str, repos: list[dict], priority: Priority =
             continue
         for contributor in result:
             login = contributor.get("login")
-            if not login:
+            if _is_bot_login(login):
                 continue
             if login not in totals:
                 totals[login] = {

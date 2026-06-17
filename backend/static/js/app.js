@@ -18,6 +18,8 @@ const state = {
   charts: { contributors: null, commits: null },
 }
 
+const pendingRefreshes = new Set()
+
 // ── Utils ─────────────────────────────────────────────────────────────────────
 
 function timeAgo(isoString) {
@@ -111,6 +113,23 @@ function setLoading(id, label) {
 function setError(id, msg) {
   const node = el(id)
   if (node) node.innerHTML = errorHTML(msg)
+}
+
+function refreshButton(key) {
+  return document.querySelector(`[data-refresh="${key}"]`)
+}
+
+function setRefreshButtonVisible(key, visible) {
+  const button = refreshButton(key)
+  if (!button) return
+  button.classList.toggle('hidden', !visible)
+}
+
+function setRefreshButtonBusy(key, busy) {
+  const button = refreshButton(key)
+  if (!button) return
+  button.disabled = busy
+  button.classList.toggle('opacity-50', busy)
 }
 
 // ── Org Header ────────────────────────────────────────────────────────────────
@@ -551,8 +570,10 @@ async function loadRepos() {
     }
 
     renderStats(state.org, data)
+    setRefreshButtonVisible('repos', Boolean(data.warning))
   } catch (e) {
     setError('repos-table-wrapper', `Repositories: ${e.message}`)
+    setRefreshButtonVisible('repos', true)
   }
 }
 
@@ -561,8 +582,10 @@ async function loadContributors() {
     const data = await apiFetch('/contributors')
     state.contributors = data
     renderContributorsChart(data)
+    setRefreshButtonVisible('contributors', false)
   } catch (e) {
     setError('contributors-content', `Contributors: ${e.message}`)
+    setRefreshButtonVisible('contributors', true)
   }
 }
 
@@ -571,8 +594,10 @@ async function loadActivity() {
     const data = await apiFetch('/activity')
     state.activity = data
     renderActivityFeed(data)
+    setRefreshButtonVisible('activity', false)
   } catch (e) {
     setError('activity-content', `Activity: ${e.message}`)
+    setRefreshButtonVisible('activity', true)
   }
 }
 
@@ -581,39 +606,31 @@ async function loadCommitActivity() {
     const data = await apiFetch('/commit-activity')
     state.commitActivity = data
     renderCommitActivity(data)
+    setRefreshButtonVisible('commits', false)
   } catch (e) {
     setError('commit-activity-content', `Commit activity: ${e.message}`)
+    setRefreshButtonVisible('commits', true)
   }
 }
 
 // ── Refresh handlers ──────────────────────────────────────────────────────────
 
-async function refreshSection(postPath, loadFn, contentId, label) {
+async function refreshSection(sectionKey, postPath, loadFn, contentId, label) {
+  if (pendingRefreshes.has(sectionKey)) return
+
+  pendingRefreshes.add(sectionKey)
+  setRefreshButtonBusy(sectionKey, true)
   setLoading(contentId, `Refreshing ${label}…`)
   try {
     await apiPost(postPath)
     await loadFn()
   } catch (e) {
     setError(contentId, e.message)
+    setRefreshButtonVisible(sectionKey, true)
+  } finally {
+    pendingRefreshes.delete(sectionKey)
+    setRefreshButtonBusy(sectionKey, false)
   }
-}
-
-async function refreshAll() {
-  const icon = el('refresh-all-icon')
-  const btn  = el('refresh-all-btn')
-  if (icon) icon.classList.add('spin')
-  if (btn)  btn.disabled = true
-
-  await Promise.allSettled([
-    refreshSection('/org/refresh',              loadOrg,           'org-header-section',    'org'),
-    refreshSection('/repos/refresh',            loadRepos,         'repos-table-wrapper',   'repos'),
-    refreshSection('/contributors/refresh',     loadContributors,  'contributors-content',  'contributors'),
-    refreshSection('/activity/refresh',         loadActivity,      'activity-content',      'activity'),
-    refreshSection('/commit-activity/refresh',  loadCommitActivity,'commit-activity-content','commits'),
-  ])
-
-  if (icon) icon.classList.remove('spin')
-  if (btn)  btn.disabled = false
 }
 
 // ── Event delegation ──────────────────────────────────────────────────────────
@@ -624,10 +641,10 @@ document.addEventListener('click', e => {
   if (refreshBtn) {
     const key = refreshBtn.dataset.refresh
     const map = {
-      repos:        ['/repos/refresh',            loadRepos,         'repos-table-wrapper',    'repos'],
-      contributors: ['/contributors/refresh',      loadContributors,  'contributors-content',   'contributors'],
-      activity:     ['/activity/refresh',          loadActivity,      'activity-content',       'activity'],
-      commits:      ['/commit-activity/refresh',   loadCommitActivity,'commit-activity-content','commits'],
+      repos:        ['repos', '/repos/refresh',            loadRepos,         'repos-table-wrapper',    'repos'],
+      contributors: ['contributors', '/contributors/refresh',      loadContributors,  'contributors-content',   'contributors'],
+      activity:     ['activity', '/activity/refresh',          loadActivity,      'activity-content',       'activity'],
+      commits:      ['commits', '/commit-activity/refresh',   loadCommitActivity,'commit-activity-content','commits'],
     }
     if (map[key]) refreshSection(...map[key])
     return
@@ -656,10 +673,6 @@ document.addEventListener('click', e => {
     return
   }
 
-  // Global refresh button
-  if (e.target.closest('#refresh-all-btn')) {
-    refreshAll()
-  }
 })
 
 // Repo search

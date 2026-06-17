@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..cache import cache_info
 from ..config import settings
-from ..services import github_service, request_queue
+from ..services import api_queue, github_service, request_queue
 
 router = APIRouter()
 
@@ -21,6 +21,11 @@ async def debug_info():
             "github_org": settings.github_org,
             "token_scopes": scopes,
             "cache_info": cache_info(),
+            "api_queue": {
+                "queue_size": api_queue.queue_length(),
+                "batch_interval_seconds": api_queue.BATCH_INTERVAL,
+                "max_calls_per_batch": api_queue.MAX_CALLS_PER_BATCH,
+            },
             "request_queue": request_queue.request_queue.get_status(),
             "warnings": (
                 []

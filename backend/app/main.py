@@ -7,11 +7,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .routers import activity, commit_activity, contributors, debug, org, repos
-from .services import cache_warming, request_queue
+from .services import api_queue, cache_warming, request_queue
 
 app = FastAPI(
     title="GitHub Dashboard API",
-    description="Metrics dashboard for a GitHub organization — including private and internal repositories.",
+    description=(
+        "Metrics dashboard for a GitHub organization, including private and "
+        "internal repositories."
+    ),
     version="1.0.0",
 )
 
@@ -25,26 +28,34 @@ app.add_middleware(
 
 app.include_router(org.router, prefix="/api/org", tags=["organization"])
 app.include_router(repos.router, prefix="/api/repos", tags=["repositories"])
-app.include_router(contributors.router, prefix="/api/contributors", tags=["contributors"])
+app.include_router(
+    contributors.router,
+    prefix="/api/contributors",
+    tags=["contributors"],
+)
 app.include_router(activity.router, prefix="/api/activity", tags=["activity"])
-app.include_router(commit_activity.router, prefix="/api/commit-activity", tags=["commit-activity"])
+app.include_router(
+    commit_activity.router,
+    prefix="/api/commit-activity",
+    tags=["commit-activity"],
+)
 app.include_router(debug.router, prefix="/api/debug", tags=["debug"])
 
 
-# Cache warming task reference
 _cache_warming_task: asyncio.Task | None = None
+_api_queue_task: asyncio.Task | None = None
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize background tasks on startup"""
     global _cache_warming_task
-    # Start request queue worker
+    global _api_queue_task
+
     request_queue.request_queue.start()
-    
-    # Start background cache warming task
+    _api_queue_task = asyncio.create_task(api_queue.process_queue())
     _cache_warming_task = asyncio.create_task(
-        cache_warming.schedule_cache_warming(interval_seconds=900)  # Every 15 minutes
+        cache_warming.schedule_cache_warming(interval_seconds=900)
     )
 
 
@@ -52,10 +63,17 @@ async def startup_event():
 async def shutdown_event():
     """Clean up background tasks on shutdown"""
     global _cache_warming_task
-    
-    # Stop request queue
+    global _api_queue_task
+
     await request_queue.request_queue.stop()
-    
+
+    if _api_queue_task and not _api_queue_task.done():
+        _api_queue_task.cancel()
+        try:
+            await _api_queue_task
+        except asyncio.CancelledError:
+            pass
+
     if _cache_warming_task and not _cache_warming_task.done():
         _cache_warming_task.cancel()
         try:

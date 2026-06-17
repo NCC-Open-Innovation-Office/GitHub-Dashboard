@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from ..cache import cache_clear, cache_get, cache_set
 from ..config import settings
 from ..services import github_service
+from ..services import api_queue
 from ..services.request_queue import Priority
 
 router = APIRouter()
@@ -12,33 +13,31 @@ router = APIRouter()
 
 @router.get("")
 async def get_repos():
+    """Return repository data, using the background queue for refresh.
+
+    If the data is cached we return it immediately. When the cache is missing
+    (or expired) we enqueue a request to fetch the data via the rate‑limited
+    ``api_queue`` and return a lightweight placeholder response. The background
+    worker will populate the cache within the next 15‑minute batch window.
+    """
     cache_key = f"repos:{settings.github_org}"
     if cached := cache_get(cache_key):
         return cached
 
-    try:
-        repos = await github_service.get_org_repos(settings.github_org, priority=Priority.HIGH)
-        result = _build_result(repos)
-        result["truncated"] = len(repos) >= settings.max_repos
-        result["max_repos"] = settings.max_repos
+    # Cache miss – enqueue a refresh and return a placeholder response.
+    # The enqueue function simply adds the call to the global queue; the worker
+    # will execute it later respecting the 1 000‑call‑per‑15‑min limit.
+    api_queue.enqueue_org_repos(settings.github_org)
 
-        if not repos:
-            scopes = await github_service.get_token_scopes(priority=Priority.HIGH)
-            has_access = any(s in ("repo", "public_repo") for s in scopes)
-            if not has_access:
-                result["warning"] = (
-                    f"No repositories found — your token has scope(s): "
-                    f"[{', '.join(scopes) or 'none'}]. "
-                    f"Private and internal repos require the 'repo' scope. "
-                    f"Update the token at: GitHub → Settings → Developer settings → Personal access tokens."
-                )
-            else:
-                result["warning"] = "This organization appears to have no repositories visible to this token."
-
-        cache_set(cache_key, result, settings.repos_cache_ttl_seconds)
-        return result
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    placeholder = {
+        "repos": [],
+        "total": 0,
+        "truncated": False,
+        "max_repos": settings.max_repos,
+        "warning": "Repository data is being refreshed in the background.",
+    }
+    cache_set(cache_key, placeholder, settings.repos_cache_ttl_seconds)
+    return placeholder
 
 
 @router.post("/refresh")

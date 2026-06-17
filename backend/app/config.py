@@ -14,8 +14,9 @@ class Settings(BaseSettings):
     # Cap how many repos to fetch — large academic orgs can have 10 000+
     max_repos: int = 1000
 
-    class Config:
-        env_file = ".env"
+    # No explicit .env loading here. Docker injects the required variables via
+    # the `env_file` directive in docker-compose.dev.yml, so Pydantic reads them
+    # directly from the process environment.
 
 
 settings = Settings()
