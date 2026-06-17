@@ -322,16 +322,18 @@ async def process_queue() -> None:
     logger.info(
         (
             "Starting rate-limited API queue processor "
-            "(batch every %d seconds, max %d calls per batch)"
+            "(max %d calls per batch)"
         ),
-        BATCH_INTERVAL,
         MAX_CALLS_PER_BATCH,
     )
     while True:
         try:
             if _api_queue:
                 await _process_batch()
-                await asyncio.sleep(BATCH_INTERVAL)
+                if _api_queue:
+                    await asyncio.sleep(0.1)
+                else:
+                    await asyncio.sleep(1)
             else:
                 await asyncio.sleep(5)
         except asyncio.CancelledError:
