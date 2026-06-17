@@ -53,6 +53,7 @@ _api_queue: deque[ApiCall] = deque()
 _enqueued_keys: set[str] = set()
 _running_keys: set[str] = set()
 _job_status: dict[str, dict[str, Any]] = {}
+_post_run_enqueues: dict[str, tuple[Callable[..., None], tuple[Any, ...]]] = {}
 
 
 def enqueue_call(call: ApiCall) -> None:
@@ -134,6 +135,14 @@ def _mark_job_success(key: str, detail: str | None = None) -> None:
 async def _delayed_enqueue(func: Callable[..., None], *args: Any) -> None:
     await asyncio.sleep(0)
     func(*args)
+
+
+def _enqueue_after_run(
+    key: str,
+    func: Callable[..., None],
+    *args: Any,
+) -> None:
+    _post_run_enqueues[key] = (func, args)
 
 
 def enqueue_unique(key: str, call: ApiCall) -> bool:
@@ -243,7 +252,7 @@ async def _refresh_org_repos(org: str, priority: Any = None) -> list[dict]:
     _cache_repo_snapshot(org, repos, next_url, complete)
 
     if not complete and next_url:
-        asyncio.create_task(_delayed_enqueue(enqueue_org_repos, org))
+        _enqueue_after_run(job_key, enqueue_org_repos, org)
     _mark_job_success(
         job_key,
         f"fetched_repos={len(repos)}, scan_complete={complete}",
@@ -327,6 +336,10 @@ async def _process_batch() -> None:
         finally:
             _running_keys.discard(key)
             _enqueued_keys.discard(key)
+            pending = _post_run_enqueues.pop(key, None)
+            if pending is not None:
+                func, args = pending
+                func(*args)
 
     await asyncio.gather(
         *(_execute(call) for call in batch),
