@@ -16,50 +16,52 @@ def _now_iso() -> str:
 
 async def warm_cache_if_needed(priority: Priority = Priority.LOW) -> None:
     """Warm the cache with frequently accessed data to reduce API calls"""
-    try:
-        # Check if org data is cached or near expiry
-        org_cache_key = f"org:{settings.github_org}"
-        if _is_needs_refresh(org_cache_key):
-            logger.info("Warming org cache...")
-            org_data = await github_service.get_org_details(
-                settings.github_org,
-                priority=priority,
-            )
-            members = await github_service.get_org_members(
-                settings.github_org,
-                priority=priority,
-            )
-            from ..routers.org import _build_result as _build_org_result
+    # Check if org data is cached or near expiry
+    org_cache_key = f"org:{settings.github_org}"
+    if _is_needs_refresh(org_cache_key):
+        logger.info("Warming org cache...")
+        org_data = await github_service.get_org_details(
+            settings.github_org,
+            priority=priority,
+        )
+        members = await github_service.get_org_members(
+            settings.github_org,
+            priority=priority,
+        )
+        from ..routers.org import _build_result as _build_org_result
 
-            result = _build_org_result(org_data, members)
-            result["is_placeholder"] = False
-            result["refreshed_at"] = _now_iso()
-            cache_set(org_cache_key, result, settings.org_cache_ttl_seconds)
+        result = _build_org_result(org_data, members)
+        result["is_placeholder"] = False
+        result["refreshed_at"] = _now_iso()
+        cache_set(org_cache_key, result, settings.org_cache_ttl_seconds)
 
-        # Check if repos data is cached or near expiry
-        repos_cache_key = f"repos:{settings.github_org}"
-        if _is_needs_refresh(repos_cache_key):
-            logger.info("Warming repos cache...")
-            repos = await github_service.get_org_repos(
-                settings.github_org,
-                priority=priority,
-            )
-            from ..routers.repos import _build_result as _build_repos_result
+    # Check if repos data is cached or near expiry
+    repos_cache_key = f"repos:{settings.github_org}"
+    if _is_needs_refresh(repos_cache_key):
+        logger.info("Warming repos cache...")
+        repos = await github_service.get_org_repos(
+            settings.github_org,
+            priority=priority,
+        )
+        from ..routers.repos import _build_result as _build_repos_result
 
-            result = _build_repos_result(repos)
-            result["truncated"] = len(repos) >= settings.max_repos
-            result["max_repos"] = settings.max_repos
-            result["is_placeholder"] = False
-            result["refreshed_at"] = _now_iso()
-            cache_set(
-                repos_cache_key,
-                result,
-                settings.repos_cache_ttl_seconds,
-            )
+        result = _build_repos_result(repos)
+        result["truncated"] = len(repos) >= settings.max_repos
+        result["max_repos"] = settings.max_repos
+        result["is_placeholder"] = False
+        result["refreshed_at"] = _now_iso()
+        cache_set(
+            f"raw_repos:{settings.github_org}",
+            repos,
+            settings.repos_cache_ttl_seconds,
+        )
+        cache_set(
+            repos_cache_key,
+            result,
+            settings.repos_cache_ttl_seconds,
+        )
 
-        logger.info("Cache warming completed successfully")
-    except Exception as e:
-        logger.warning(f"Cache warming failed: {e}")
+    logger.info("Cache warming completed successfully")
 
 
 def _is_needs_refresh(key: str, threshold_seconds: int = 60) -> bool:
@@ -83,11 +85,16 @@ async def schedule_cache_warming(interval_seconds: int = 300) -> None:
     while True:
         try:
             # Check for near-expiry items every 60 seconds
-            await warm_cache_if_needed(priority=Priority.LOW)
+            result = await asyncio.gather(
+                warm_cache_if_needed(priority=Priority.LOW),
+                return_exceptions=True,
+            )
+            if result and isinstance(result[0], Exception):
+                logger.error(
+                    "Cache warming scheduler error: %s",
+                    result[0],
+                )
             await asyncio.sleep(interval_seconds)
         except asyncio.CancelledError:
             logger.info("Cache warming scheduler cancelled")
             break
-        except Exception as e:
-            logger.error(f"Cache warming scheduler error: {e}")
-            await asyncio.sleep(interval_seconds)

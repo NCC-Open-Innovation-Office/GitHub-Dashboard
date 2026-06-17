@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine
 
-from ..cache import cache_set
+from ..cache import cache_get, cache_set
 from ..config import settings
 from .github_service import (
     get_all_contributors,
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 MAX_CALLS_PER_BATCH = 1000
 BATCH_INTERVAL = 15 * 60
+JOB_TIMEOUT_SECONDS = 30 * 60
 
 
 @dataclass(order=True)
@@ -47,6 +48,8 @@ class ApiCall:
 
 _api_queue: deque[ApiCall] = deque()
 _enqueued_keys: set[str] = set()
+_running_keys: set[str] = set()
+_job_status: dict[str, dict[str, Any]] = {}
 
 
 def enqueue_call(call: ApiCall) -> None:
@@ -55,6 +58,21 @@ def enqueue_call(call: ApiCall) -> None:
         "Enqueued API call: %s (queue size=%d)",
         call.description or call.func.__name__,
         len(_api_queue),
+    )
+
+
+def _ensure_status(key: str) -> dict[str, Any]:
+    return _job_status.setdefault(
+        key,
+        {
+            "state": "idle",
+            "enqueued_at": None,
+            "started_at": None,
+            "finished_at": None,
+            "last_success_at": None,
+            "last_error": None,
+            "run_count": 0,
+        },
     )
 
 
@@ -67,6 +85,9 @@ def enqueue_unique(key: str, call: ApiCall) -> bool:
     if key in _enqueued_keys:
         return False
     _enqueued_keys.add(key)
+    status = _ensure_status(key)
+    status["state"] = "queued"
+    status["enqueued_at"] = _now_iso()
     enqueue_call(call)
     return True
 
@@ -85,8 +106,27 @@ async def _refresh_org_repos(org: str, priority: Any = None) -> list[dict]:
     result["max_repos"] = settings.max_repos
     result["is_placeholder"] = False
     result["refreshed_at"] = _now_iso()
+    cache_set(f"raw_repos:{org}", repos, settings.repos_cache_ttl_seconds)
     cache_set(f"repos:{org}", result, settings.repos_cache_ttl_seconds)
     return repos
+
+
+async def _get_or_refresh_raw_repos(org: str) -> list[dict]:
+    if cached := cache_get(f"raw_repos:{org}"):
+        return cached
+
+    repos_key = f"repos:{org}"
+    wait_deadline = asyncio.get_running_loop().time() + 120
+    while repos_key in _enqueued_keys or repos_key in _running_keys:
+        if cached := cache_get(f"raw_repos:{org}"):
+            return cached
+        if asyncio.get_running_loop().time() >= wait_deadline:
+            break
+        await asyncio.sleep(1)
+
+    if cached := cache_get(f"raw_repos:{org}"):
+        return cached
+    return await _refresh_org_repos(org)
 
 
 async def _process_batch() -> None:
@@ -105,11 +145,48 @@ async def _process_batch() -> None:
     )
 
     async def _execute(call: ApiCall) -> Any:
+        key = call.description or call.func.__name__
+        status = _ensure_status(key)
+        _running_keys.add(key)
+        status["state"] = "running"
+        status["started_at"] = _now_iso()
+        status["run_count"] += 1
+        task = asyncio.create_task(call.execute())
         try:
-            return await call.execute()
+            await asyncio.wait_for(
+                asyncio.shield(task),
+                timeout=JOB_TIMEOUT_SECONDS,
+            )
+            exc = task.exception()
+            if exc is not None:
+                status["state"] = "failed"
+                status["finished_at"] = _now_iso()
+                status["last_error"] = str(exc)
+                return None
+
+            result = task.result()
+            status["state"] = "succeeded"
+            status["finished_at"] = _now_iso()
+            status["last_success_at"] = status["finished_at"]
+            status["last_error"] = None
+            return result
+        except asyncio.TimeoutError:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            status["state"] = "failed"
+            status["finished_at"] = _now_iso()
+            status["last_error"] = (
+                f"Timed out after {JOB_TIMEOUT_SECONDS} seconds"
+            )
+            logger.error("Queued API call %s timed out", key)
+            return None
+        except asyncio.CancelledError:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            raise
         finally:
-            if call.description:
-                _enqueued_keys.discard(call.description)
+            _running_keys.discard(key)
+            _enqueued_keys.discard(key)
 
     await asyncio.gather(
         *(_execute(call) for call in batch),
@@ -136,9 +213,6 @@ async def process_queue() -> None:
         except asyncio.CancelledError:
             logger.info("API queue processor cancelled")
             break
-        except Exception:
-            logger.exception("Unexpected error while processing API queue")
-            await asyncio.sleep(5)
 
 
 def enqueue_org_details(org: str) -> None:
@@ -190,6 +264,7 @@ def enqueue_org_events(org: str) -> None:
 
 
 def enqueue_commit_activity(org: str) -> None:
+    enqueue_org_repos(org)
     key = f"commit_activity:{org}"
     enqueue_unique(
         key,
@@ -202,6 +277,7 @@ def enqueue_commit_activity(org: str) -> None:
 
 
 def enqueue_contributors(org: str) -> None:
+    enqueue_org_repos(org)
     key = f"contributors:{org}"
     enqueue_unique(
         key,
@@ -217,8 +293,11 @@ def get_queue_status() -> dict[str, Any]:
     return {
         "queue_size": len(_api_queue),
         "enqueued_keys": sorted(_enqueued_keys),
+        "running_keys": sorted(_running_keys),
         "batch_interval_seconds": BATCH_INTERVAL,
         "max_calls_per_batch": MAX_CALLS_PER_BATCH,
+        "job_timeout_seconds": JOB_TIMEOUT_SECONDS,
+        "jobs": _job_status,
     }
 
 
@@ -326,7 +405,7 @@ async def _refresh_activity(org: str) -> dict:
 
 
 async def _refresh_contributors(org: str) -> dict:
-    repos = await get_org_repos(org)
+    repos = await _get_or_refresh_raw_repos(org)
     active_repos = [r for r in repos if not r.get("archived", False)][:150]
     contributors = await get_all_contributors(org, active_repos)
     result = {
@@ -347,7 +426,7 @@ async def _refresh_contributors(org: str) -> dict:
 
 
 async def _refresh_commit_activity(org: str) -> dict:
-    repos = await get_org_repos(org)
+    repos = await _get_or_refresh_raw_repos(org)
     result = await get_commit_activity(org, repos)
     result["is_placeholder"] = False
     result["refreshed_at"] = _now_iso()
