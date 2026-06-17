@@ -220,15 +220,44 @@ async def _refresh_org_repos(org: str, priority: Any = None) -> list[dict]:
                 f"has_next_url={bool(next_url)}"
             ),
         )
-        try:
-            page, next_url = await get_org_repos_page(
-                org,
-                next_url=next_url,
-                priority=effective_priority,
-            )
-        except Exception as exc:
-            _mark_job_error(job_key, str(exc))
-            raise
+        retries = 0
+        while True:
+            try:
+                page, next_url = await get_org_repos_page(
+                    org,
+                    next_url=next_url,
+                    priority=effective_priority,
+                )
+                break
+            except TimeoutError as exc:
+                retries += 1
+                if retries <= 2 and page_count == 0:
+                    _mark_job_step(
+                        job_key,
+                        "retrying_repo_page",
+                        f"attempt={retries + 1}, fetched_repos={len(repos)}",
+                    )
+                    await asyncio.sleep(2 * retries)
+                    continue
+                if repos:
+                    _cache_repo_snapshot(
+                        org,
+                        repos[:settings.max_repos],
+                        next_url,
+                        False,
+                    )
+                _mark_job_error(job_key, str(exc))
+                raise
+            except Exception as exc:
+                if repos:
+                    _cache_repo_snapshot(
+                        org,
+                        repos[:settings.max_repos],
+                        next_url,
+                        False,
+                    )
+                _mark_job_error(job_key, str(exc))
+                raise
         if not page:
             complete = True
             break

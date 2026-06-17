@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from datetime import datetime, timezone
 
-from ..cache import cache_clear, cache_get, cache_set
+from ..cache import cache_get, cache_set
 from ..config import settings
 from ..services import api_queue
 
@@ -29,5 +29,4 @@ async def get_contributors():
 
 @router.post("/refresh")
 async def refresh_contributors():
-    cache_clear(f"contributors:{settings.github_org}")
     return await get_contributors()

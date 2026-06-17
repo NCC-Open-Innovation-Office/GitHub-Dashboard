@@ -9,7 +9,7 @@ from .request_queue import request_queue, Priority
 
 BASE_URL = "https://api.github.com"
 _SEMAPHORE_LIMIT = 10  # concurrent requests for contributor fetching
-_REPO_PAGE_TIMEOUT_SECONDS = 45
+_REPO_PAGE_TIMEOUT_SECONDS = 120
 
 
 def _is_bot_login(login: str | None) -> bool:

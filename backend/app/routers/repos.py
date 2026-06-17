@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
-from ..cache import cache_clear, cache_get, cache_set
+from ..cache import cache_get, cache_set
 from ..config import settings
 from ..services import api_queue
 
@@ -51,7 +51,6 @@ async def get_repos():
 
 @router.post("/refresh")
 async def refresh_repos():
-    cache_clear(f"repos:{settings.github_org}")
     return await get_repos()
 
 
