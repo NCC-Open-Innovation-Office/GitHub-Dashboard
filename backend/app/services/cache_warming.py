@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from ..cache import cache_get, cache_set, _expiry
+from ..cache import cache_expires_in_seconds, cache_get, cache_set
 from ..config import settings
 from . import api_queue
 from . import github_service
@@ -42,6 +42,12 @@ async def warm_cache_if_needed(priority: Priority = Priority.LOW) -> None:
         logger.info("Queueing incremental repos refresh...")
         api_queue.enqueue_org_repos(settings.github_org)
 
+    if settings.member_wide_mode_enabled:
+        member_cache_key = f"member_wide_stats:{settings.github_org}"
+        if _is_needs_refresh(member_cache_key):
+            logger.info("Queueing member-wide stats refresh...")
+            api_queue.enqueue_member_wide_stats(settings.github_org)
+
     logger.info("Cache warming completed successfully")
 
 
@@ -51,11 +57,10 @@ def _is_needs_refresh(key: str, threshold_seconds: int = 60) -> bool:
     if val is None:
         return True
 
-    expiry = _expiry.get(key)
-    if expiry:
-        remaining = (expiry - datetime.now(tz=timezone.utc)).total_seconds()
-        return remaining < threshold_seconds
-    return True
+    remaining = cache_expires_in_seconds(key)
+    if remaining is None:
+        return True
+    return remaining < threshold_seconds
 
 
 async def schedule_cache_warming(interval_seconds: int = 300) -> None:

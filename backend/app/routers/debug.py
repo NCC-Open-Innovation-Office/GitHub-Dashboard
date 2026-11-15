@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from ..cache import cache_info
+from ..cache import cache_entry_metadata, cache_info
 from ..config import settings
 from ..services import api_queue, github_service, request_queue
 from ..services.api_queue import get_repo_progress
@@ -69,6 +69,35 @@ async def queue_status():
 async def cache_stats():
     """Returns detailed cache statistics"""
     return cache_info()
+
+
+@router.get("/cache-age")
+async def cache_age():
+    """Returns age/expiry metadata for key dashboard cache datasets."""
+    org = settings.github_org
+    dataset_keys = {
+        "org": f"org:{org}",
+        "repos": f"repos:{org}",
+        "raw_repos": f"raw_repos:{org}",
+        "contributors": f"contributors:{org}",
+        "member_wide_stats": f"member_wide_stats:{org}",
+        "activity": f"activity:{org}",
+        "commit_activity": f"commit_activity:{org}",
+    }
+
+    datasets: dict[str, dict] = {}
+    for name, key in dataset_keys.items():
+        meta = cache_entry_metadata(key)
+        datasets[name] = {
+            "key": key,
+            "present": meta is not None,
+            "metadata": meta,
+        }
+
+    return {
+        "github_org": org,
+        "datasets": datasets,
+    }
 
 
 @router.get("/repo-page-probe")

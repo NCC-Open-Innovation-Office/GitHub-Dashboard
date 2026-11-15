@@ -387,7 +387,7 @@ function renderContributorsChart(data) {
   const container = el('contributors-content')
   if (!container) return
 
-  const top = (data?.contributors || []).slice(0, 25)
+  const top = (data?.contributors || []).slice(0, 10)
   if (!top.length) {
     container.innerHTML = '<p class="text-sm text-slate-500">No contributor data available.</p>'
     return
@@ -408,7 +408,7 @@ function renderContributorsChart(data) {
     state.charts.contributors = null
   }
 
-  const COLORS = ['#6366f1','#8b5cf6','#a78bfa','#c4b5fd','#818cf8','#7c3aed','#4f46e5','#4338ca','#7e22ce','#6d28d9','#5b21b6','#7c3aed','#9333ea','#a21caf','#86198f']
+  const COLORS = ['#6366f1','#8b5cf6','#a78bfa','#c4b5fd','#818cf8','#7c3aed','#4f46e5','#4338ca','#7e22ce','#6d28d9']
 
   const ctx = el('contributors-chart').getContext('2d')
   state.charts.contributors = new Chart(ctx, {
@@ -440,7 +440,10 @@ function renderContributorsChart(data) {
       },
       scales: {
         x: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8', font: { size: 11 } } },
-        y: { grid: { display: false }, ticks: { color: '#e2e8f0', font: { size: 12 } } },
+        y: {
+          grid: { display: false },
+          ticks: { color: '#e2e8f0', font: { size: 12 }, autoSkip: false },
+        },
       },
     },
   })

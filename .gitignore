@@ -38,3 +38,7 @@ venv/
 # Docker
 *.log
 .idea/*
+
+# Persistent stats cache database
+backend/data/
+*.db

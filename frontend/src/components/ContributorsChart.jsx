@@ -40,14 +40,14 @@ function CustomTooltip({ active, payload }) {
 }
 
 export default function ContributorsChart({ data }) {
-  const top = data?.contributors?.slice(0, 25) ?? []
+  const top = data?.contributors?.slice(0, 10) ?? []
 
   if (!top.length) return null
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
-        Top Contributors
+        Top 10 Contributors
       </h2>
       <div className="text-xs text-slate-500">
         {data.total_unique_contributors} unique contributors ·{' '}
@@ -63,6 +63,7 @@ export default function ContributorsChart({ data }) {
           <YAxis
             type="category"
             dataKey="login"
+            interval={0}
             tick={{ fill: '#cbd5e1', fontSize: 12 }}
             axisLine={false}
             tickLine={false}

@@ -15,6 +15,7 @@ from .github_service import (
     get_org_events,
     get_org_members,
     get_org_repos_page,
+    get_user_repos,
 )
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ JOB_TIMEOUT_SECONDS = 30 * 60
 REPO_PAGES_PER_JOB = 5
 CONTRIBUTOR_REPO_SAMPLE = 150
 COMMIT_ACTIVITY_REPO_SAMPLE = 200
+MEMBER_WIDE_CONCURRENCY = 6
 
 
 @dataclass(order=True)
@@ -484,6 +486,29 @@ def enqueue_contributors(org: str) -> None:
     )
 
 
+def enqueue_full_refresh(org: str) -> None:
+    """Queue refresh jobs for all dashboard datasets."""
+    enqueue_org_details(org)
+    enqueue_org_repos(org)
+    enqueue_org_events(org)
+    enqueue_contributors(org)
+    enqueue_commit_activity(org)
+    if settings.member_wide_mode_enabled:
+        enqueue_member_wide_stats(org)
+
+
+def enqueue_member_wide_stats(org: str) -> None:
+    key = f"member_wide_stats:{org}"
+    enqueue_unique(
+        key,
+        ApiCall(
+            func=_refresh_member_wide_stats,
+            args=(org,),
+            description=key,
+        ),
+    )
+
+
 def get_queue_status() -> dict[str, Any]:
     return {
         "queue_size": len(_api_queue),
@@ -704,5 +729,121 @@ async def _refresh_commit_activity(org: str) -> dict:
     _mark_job_success(
         job_key,
         f"repo_sample_size={len(sample_repos)}, repo_scan_complete={complete}",
+    )
+    return result
+
+
+async def _refresh_member_wide_stats(org: str) -> dict:
+    job_key = f"member_wide_stats:{org}"
+    _mark_job_step(job_key, "loading_org_members")
+    members = await get_org_members(org)
+    members = members[: settings.member_wide_max_members]
+
+    semaphore = asyncio.Semaphore(MEMBER_WIDE_CONCURRENCY)
+
+    async def _fetch_member_stats(member: dict[str, Any]) -> dict[str, Any]:
+        login = member.get("login")
+        if not login:
+            return {}
+
+        async with semaphore:
+            repos = await get_user_repos(
+                login,
+                max_items=settings.member_wide_repo_limit_per_member,
+                priority=Priority.LOW,
+            )
+
+        visibility_counts = {"public": 0, "private": 0, "internal": 0}
+        for repo in repos:
+            visibility = repo.get("visibility", "public")
+            if visibility not in visibility_counts:
+                visibility = "public"
+            visibility_counts[visibility] += 1
+
+        pushed_dates: list[str] = [
+            pushed_at
+            for repo in repos
+            if (pushed_at := repo.get("pushed_at")) is not None
+        ]
+
+        return {
+            "login": login,
+            "avatar_url": member.get("avatar_url"),
+            "html_url": f"https://github.com/{login}",
+            "repo_count": len(repos),
+            "total_stars": sum(
+                int(repo.get("stargazers_count", 0)) for repo in repos
+            ),
+            "total_forks": sum(
+                int(repo.get("forks_count", 0)) for repo in repos
+            ),
+            "total_open_issues": sum(
+                int(repo.get("open_issues_count", 0)) for repo in repos
+            ),
+            "last_pushed_at": max(pushed_dates) if pushed_dates else None,
+            "visibility_breakdown": visibility_counts,
+        }
+
+    _mark_job_step(
+        job_key,
+        "fetching_member_repo_stats",
+        f"member_count={len(members)}",
+    )
+    rows = await asyncio.gather(
+        *(_fetch_member_stats(m) for m in members),
+        return_exceptions=True,
+    )
+
+    member_stats: list[dict[str, Any]] = []
+    for row in rows:
+        if isinstance(row, dict) and row:
+            member_stats.append(row)
+
+    member_stats.sort(
+        key=lambda item: (
+            int(item.get("repo_count", 0)),
+            int(item.get("total_stars", 0)),
+        ),
+        reverse=True,
+    )
+
+    result = {
+        "scope": "member_wide",
+        "member_count": len(member_stats),
+        "members": member_stats,
+        "totals": {
+            "repos": sum(int(m.get("repo_count", 0)) for m in member_stats),
+            "stars": sum(int(m.get("total_stars", 0)) for m in member_stats),
+            "forks": sum(int(m.get("total_forks", 0)) for m in member_stats),
+            "open_issues": sum(
+                int(m.get("total_open_issues", 0)) for m in member_stats
+            ),
+        },
+        "limits": {
+            "max_members": settings.member_wide_max_members,
+            "max_repos_per_member": settings.member_wide_repo_limit_per_member,
+        },
+        "warning": (
+            "Member-wide stats include only repositories visible to this "
+            "token. "
+            "Private repositories outside organization access are excluded."
+        ),
+        "is_placeholder": False,
+        "refreshed_at": _now_iso(),
+    }
+
+    cache_set(
+        f"member_wide_stats:{org}",
+        result,
+        settings.member_wide_cache_ttl_seconds,
+    )
+    cache_set_last_good(
+        f"member_wide_stats:{org}",
+        result,
+        settings.member_wide_cache_ttl_seconds,
+    )
+    _mark_job_success(
+        job_key,
+        f"member_count={len(member_stats)}",
     )
     return result

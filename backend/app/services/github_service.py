@@ -179,6 +179,21 @@ async def get_org_repos(org: str, priority: Priority = Priority.HIGH) -> list[di
         )
 
 
+async def get_user_repos(
+    username: str,
+    max_items: int | None = None,
+    priority: Priority = Priority.HIGH,
+) -> list[dict]:
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        return await _paginate(
+            client,
+            f"{BASE_URL}/users/{username}/repos",
+            {"type": "owner", "per_page": 100, "sort": "updated"},
+            max_items=max_items,
+            priority=priority,
+        )
+
+
 async def get_org_repos_page(
     org: str,
     next_url: str | None = None,

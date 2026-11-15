@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .cache import initialize_cache
+from .config import settings
 from .routers import activity, commit_activity, contributors, debug, org, repos
 from .services import api_queue, cache_warming, request_queue
 
@@ -42,42 +44,37 @@ app.include_router(
 app.include_router(debug.router, prefix="/api/debug", tags=["debug"])
 
 
-_cache_warming_task: asyncio.Task | None = None
-_api_queue_task: asyncio.Task | None = None
-
-
 @app.on_event("startup")
 async def startup_event():
     """Initialize background tasks on startup"""
-    global _cache_warming_task
-    global _api_queue_task
-
+    initialize_cache()
     request_queue.request_queue.start()
-    _api_queue_task = asyncio.create_task(api_queue.process_queue())
-    _cache_warming_task = asyncio.create_task(
+    app.state.api_queue_task = asyncio.create_task(api_queue.process_queue())
+    app.state.cache_warming_task = asyncio.create_task(
         cache_warming.schedule_cache_warming(interval_seconds=900)
     )
+    if settings.startup_full_refresh:
+        api_queue.enqueue_full_refresh(settings.github_org)
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up background tasks on shutdown"""
-    global _cache_warming_task
-    global _api_queue_task
-
     await request_queue.request_queue.stop()
 
-    if _api_queue_task and not _api_queue_task.done():
-        _api_queue_task.cancel()
+    api_queue_task = getattr(app.state, "api_queue_task", None)
+    if api_queue_task and not api_queue_task.done():
+        api_queue_task.cancel()
         try:
-            await _api_queue_task
+            await api_queue_task
         except asyncio.CancelledError:
             pass
 
-    if _cache_warming_task and not _cache_warming_task.done():
-        _cache_warming_task.cancel()
+    cache_warming_task = getattr(app.state, "cache_warming_task", None)
+    if cache_warming_task and not cache_warming_task.done():
+        cache_warming_task.cancel()
         try:
-            await _cache_warming_task
+            await cache_warming_task
         except asyncio.CancelledError:
             pass
 
