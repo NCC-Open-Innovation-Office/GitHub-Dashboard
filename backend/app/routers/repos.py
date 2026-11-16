@@ -5,6 +5,7 @@ from fastapi import APIRouter
 
 from ..cache import cache_get_or_last_good, cache_set
 from ..config import settings
+from ..public_data import filter_public_repos, public_cache_key
 from ..services import api_queue
 
 router = APIRouter()
@@ -19,7 +20,7 @@ async def get_repos():
     ``api_queue`` and return a lightweight placeholder response. The background
     worker will populate the cache within the next 15‑minute batch window.
     """
-    cache_key = f"repos:{settings.github_org}"
+    cache_key = public_cache_key("repos", settings.github_org)
     if cached := cache_get_or_last_good(cache_key):
         return cached
 
@@ -32,15 +33,12 @@ async def get_repos():
         "repos": [],
         "total": 0,
         "public": 0,
-        "private": 0,
-        "internal": 0,
         "archived": 0,
         "total_stars": 0,
         "total_forks": 0,
         "total_open_issues": 0,
+        "total_public_open_issues": 0,
         "languages": {},
-        "truncated": False,
-        "max_repos": settings.max_repos,
         "warning": "Repository data is being refreshed in the background.",
         "is_placeholder": True,
         "refreshed_at": datetime.now(tz=timezone.utc).isoformat(),
@@ -58,7 +56,9 @@ def _build_result(repos: list[dict]) -> dict:
     language_counts: Counter = Counter()
     repo_list = []
 
-    for repo in repos:
+    public_repos = filter_public_repos(repos)
+
+    for repo in public_repos:
         if repo.get("language"):
             language_counts[repo["language"]] += 1
 
@@ -69,7 +69,6 @@ def _build_result(repos: list[dict]) -> dict:
                 "full_name": repo["full_name"],
                 "description": repo.get("description"),
                 "visibility": repo.get("visibility", "public"),
-                "private": repo.get("private", False),
                 "html_url": repo.get("html_url"),
                 "language": repo.get("language"),
                 "stars": repo.get("stargazers_count", 0),
@@ -89,15 +88,11 @@ def _build_result(repos: list[dict]) -> dict:
     return {
         "repos": repo_list,
         "total": len(repo_list),
-        "public": sum(1 for r in repo_list if r["visibility"] == "public"),
-        "private": sum(1 for r in repo_list if r["visibility"] == "private"),
-        "internal": sum(1 for r in repo_list if r["visibility"] == "internal"),
+        "public": len(repo_list),
         "archived": sum(1 for r in repo_list if r["archived"]),
         "total_stars": sum(r["stars"] for r in repo_list),
         "total_forks": sum(r["forks"] for r in repo_list),
         "total_open_issues": sum(r["open_issues"] for r in repo_list),
-        "total_public_open_issues": sum(
-            r["open_issues"] for r in repo_list if r["visibility"] == "public"
-        ),
+        "total_public_open_issues": sum(r["open_issues"] for r in repo_list),
         "languages": dict(language_counts.most_common(10)),
     }

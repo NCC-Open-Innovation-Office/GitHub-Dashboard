@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from ..cache import cache_get_or_last_good, cache_set
 from ..config import settings
+from ..public_data import public_cache_key
 from ..services import api_queue
 
 router = APIRouter()
@@ -22,7 +23,7 @@ _INTERESTING = {
 
 @router.get("")
 async def get_activity():
-    cache_key = f"activity:{settings.github_org}"
+    cache_key = public_cache_key("activity", settings.github_org)
     if cached := cache_get_or_last_good(
         cache_key,
         "Activity data is being refreshed in the background.",
@@ -108,8 +109,14 @@ def _extract_payload(event: dict) -> dict:
     return {}
 
 
-def _build_result(events: list[dict]) -> dict:
-    filtered = [
-        _format_event(e) for e in events if e.get("type") in _INTERESTING
-    ]
+def _build_result(events: list[dict], public_repo_names: set[str]) -> dict:
+    filtered = []
+    for event in events:
+        repo_name = (event.get("repo") or {}).get("name")
+        if (
+            event.get("type") in _INTERESTING
+            and isinstance(repo_name, str)
+            and repo_name.casefold() in public_repo_names
+        ):
+            filtered.append(_format_event(event))
     return {"events": filtered[:50], "total": len(filtered)}

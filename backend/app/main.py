@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .cache import initialize_cache
 from .config import settings
-from .routers import activity, commit_activity, contributors, debug, org, repos
+from .routers import activity, commit_activity, contributors, org, repos
 from .services import api_queue, cache_warming, request_queue
 
 app = FastAPI(
@@ -41,7 +41,6 @@ app.include_router(
     prefix="/api/commit-activity",
     tags=["commit-activity"],
 )
-app.include_router(debug.router, prefix="/api/debug", tags=["debug"])
 
 
 @app.on_event("startup")

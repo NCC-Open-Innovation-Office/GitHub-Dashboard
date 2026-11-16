@@ -7,6 +7,7 @@ from typing import Any, Callable, Coroutine
 
 from ..cache import cache_get, cache_set, cache_set_last_good
 from ..config import settings
+from ..public_data import filter_public_repos, public_cache_key
 from .request_queue import Priority
 from .github_service import (
     get_all_contributors,
@@ -173,22 +174,16 @@ def _cache_repo_snapshot(
     from ..routers.repos import _build_result
 
     result = _build_result(repos)
-    result["truncated"] = not complete and len(repos) >= settings.max_repos
-    result["max_repos"] = settings.max_repos
     result["is_placeholder"] = not complete
     result["refreshed_at"] = _now_iso()
-    result["fetched_repos"] = len(repos)
-    result["scan_complete"] = complete
     if not complete:
-        result["warning"] = (
-            f"Repository data is partially populated from {len(repos)} repos; "
-            "background refresh is continuing."
-        )
+        result["warning"] = "Public repository data is being refreshed."
 
     cache_set(f"raw_repos:{org}", repos, settings.repos_cache_ttl_seconds)
-    cache_set(f"repos:{org}", result, settings.repos_cache_ttl_seconds)
+    repos_key = public_cache_key("repos", org)
+    cache_set(repos_key, result, settings.repos_cache_ttl_seconds)
     cache_set_last_good(
-        f"repos:{org}",
+        repos_key,
         result,
         settings.repos_cache_ttl_seconds,
     )
@@ -493,8 +488,6 @@ def enqueue_full_refresh(org: str) -> None:
     enqueue_org_events(org)
     enqueue_contributors(org)
     enqueue_commit_activity(org)
-    if settings.member_wide_mode_enabled:
-        enqueue_member_wide_stats(org)
 
 
 def enqueue_member_wide_stats(org: str) -> None:
@@ -525,16 +518,16 @@ async def _refresh_org_overview(org: str) -> dict:
     job_key = f"org:{org}"
     _mark_job_step(job_key, "fetching_org_overview")
     org_data = await get_org_details(org)
-    members = await get_org_members(org)
 
     from ..routers.org import _build_result
 
-    result = _build_result(org_data, members)
+    result = _build_result(org_data)
     result["is_placeholder"] = False
     result["refreshed_at"] = _now_iso()
-    cache_set(f"org:{org}", result, settings.org_cache_ttl_seconds)
+    org_key = public_cache_key("org", org)
+    cache_set(org_key, result, settings.org_cache_ttl_seconds)
     cache_set_last_good(
-        f"org:{org}",
+        org_key,
         result,
         settings.org_cache_ttl_seconds,
     )
@@ -545,98 +538,26 @@ async def _refresh_org_overview(org: str) -> dict:
 async def _refresh_activity(org: str) -> dict:
     job_key = f"activity:{org}"
     _mark_job_step(job_key, "fetching_activity")
+    repos = await _get_or_refresh_raw_repos(org)
+    public_repo_names = {
+        repo["full_name"].casefold()
+        for repo in filter_public_repos(repos)
+        if repo.get("full_name")
+    }
     events = await get_org_events(org)
-    interesting = {
-        "PushEvent",
-        "PullRequestEvent",
-        "IssuesEvent",
-        "CreateEvent",
-        "ReleaseEvent",
-        "ForkEvent",
-        "WatchEvent",
-        "PullRequestReviewEvent",
-        "DeleteEvent",
-    }
+    from ..routers.activity import _build_result
 
-    formatted = []
-    for event in events:
-        event_type = event.get("type", "")
-        if event_type not in interesting:
-            continue
-
-        payload = event.get("payload", {})
-        extracted: dict[str, Any] = {}
-        if event_type == "PushEvent":
-            commits = payload.get("commits", [])
-            extracted = {
-                "ref": payload.get("ref", ""),
-                "commit_count": len(commits),
-                "message": commits[0]["message"][:120] if commits else "",
-            }
-        elif event_type == "PullRequestEvent":
-            pr = payload.get("pull_request", {})
-            extracted = {
-                "action": payload.get("action"),
-                "title": pr.get("title", ""),
-                "number": pr.get("number"),
-                "html_url": pr.get("html_url", ""),
-                "merged": pr.get("merged", False),
-            }
-        elif event_type == "IssuesEvent":
-            issue = payload.get("issue", {})
-            extracted = {
-                "action": payload.get("action"),
-                "title": issue.get("title", ""),
-                "number": issue.get("number"),
-                "html_url": issue.get("html_url", ""),
-            }
-        elif event_type == "CreateEvent":
-            extracted = {
-                "ref_type": payload.get("ref_type"),
-                "ref": payload.get("ref"),
-            }
-        elif event_type == "ReleaseEvent":
-            release = payload.get("release", {})
-            extracted = {
-                "action": payload.get("action"),
-                "tag_name": release.get("tag_name"),
-                "name": release.get("name"),
-                "html_url": release.get("html_url", ""),
-            }
-        elif event_type == "ForkEvent":
-            forkee = payload.get("forkee", {})
-            extracted = {"forkee": forkee.get("full_name", "")}
-
-        actor = event.get("actor", {})
-        login = actor.get("login", "unknown")
-        formatted.append(
-            {
-                "id": event.get("id"),
-                "type": event_type,
-                "actor": {
-                    "login": login,
-                    "avatar_url": actor.get("avatar_url"),
-                    "url": f"https://github.com/{login}",
-                },
-                "repo": event.get("repo", {}).get("name", ""),
-                "created_at": event.get("created_at"),
-                "payload": extracted,
-            }
-        )
-
-    result = {
-        "events": formatted[:50],
-        "total": len(formatted),
-        "is_placeholder": False,
-        "refreshed_at": _now_iso(),
-    }
-    cache_set(f"activity:{org}", result, settings.activity_cache_ttl_seconds)
+    result = _build_result(events, public_repo_names)
+    result["is_placeholder"] = False
+    result["refreshed_at"] = _now_iso()
+    activity_key = public_cache_key("activity", org)
+    cache_set(activity_key, result, settings.activity_cache_ttl_seconds)
     cache_set_last_good(
-        f"activity:{org}",
+        activity_key,
         result,
         settings.activity_cache_ttl_seconds,
     )
-    _mark_job_success(job_key, f"events={len(formatted[:50])}")
+    _mark_job_success(job_key, f"events={len(result['events'])}")
     return result
 
 
@@ -646,7 +567,9 @@ async def _refresh_contributors(org: str) -> dict:
     repos = await _get_or_refresh_raw_repos(org)
     progress = _repo_progress(org)
     active_repos = [
-        repo for repo in repos if not repo.get("archived", False)
+        repo
+        for repo in filter_public_repos(repos)
+        if not repo.get("archived", False)
     ][:CONTRIBUTOR_REPO_SAMPLE]
     _mark_job_step(
         job_key,
@@ -662,23 +585,21 @@ async def _refresh_contributors(org: str) -> dict:
             c.get("contributions", 0) for c in contributors
         ),
         "repo_sample_size": len(active_repos),
-        "repo_scan_complete": complete,
         "is_placeholder": not complete,
         "refreshed_at": _now_iso(),
     }
     if not complete:
         result["warning"] = (
-            "Contributor data is based on the first "
-            f"{len(active_repos)} active repos; "
-            "background refresh is continuing."
+            "Contributor data is based on a partial public repository scan."
         )
+    contributors_key = public_cache_key("contributors", org)
     cache_set(
-        f"contributors:{org}",
+        contributors_key,
         result,
         settings.contributors_cache_ttl_seconds,
     )
     cache_set_last_good(
-        f"contributors:{org}",
+        contributors_key,
         result,
         settings.contributors_cache_ttl_seconds,
     )
@@ -695,7 +616,7 @@ async def _refresh_commit_activity(org: str) -> dict:
     repos = await _get_or_refresh_raw_repos(org)
     progress = _repo_progress(org)
     sample_repos = sorted(
-        repos,
+        filter_public_repos(repos),
         key=lambda repo: repo.get("pushed_at") or "",
         reverse=True,
     )[:COMMIT_ACTIVITY_REPO_SAMPLE]
@@ -707,22 +628,18 @@ async def _refresh_commit_activity(org: str) -> dict:
     result = await get_commit_activity(org, sample_repos)
     complete = bool(progress.get("complete", False))
     result["repo_sample_size"] = len(sample_repos)
-    result["repo_scan_complete"] = complete
     result["is_placeholder"] = not complete
     result["refreshed_at"] = _now_iso()
     if not complete:
-        result["warning"] = (
-            "Commit activity is based on the first "
-            f"{len(sample_repos)} repos scanned; "
-            "background refresh is continuing."
-        )
+        result["warning"] = "Commit activity is based on a partial public repository scan."
+    commit_activity_key = public_cache_key("commit_activity", org)
     cache_set(
-        f"commit_activity:{org}",
+        commit_activity_key,
         result,
         settings.commit_activity_cache_ttl_seconds,
     )
     cache_set_last_good(
-        f"commit_activity:{org}",
+        commit_activity_key,
         result,
         settings.commit_activity_cache_ttl_seconds,
     )

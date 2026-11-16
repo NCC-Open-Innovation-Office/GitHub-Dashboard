@@ -3,8 +3,7 @@ import {
   FiStar,
   FiGitBranch,
   FiAlertCircle,
-  FiLock,
-  FiUserCheck,
+  FiArchive,
 } from 'react-icons/fi'
 
 function StatCard({ icon: Icon, label, value, sub, color }) {
@@ -23,12 +22,8 @@ function StatCard({ icon: Icon, label, value, sub, color }) {
 }
 
 export default function StatsGrid({ org, repos }) {
-  const privateCount = repos
-    ? repos.private + (repos.internal ?? 0)
-    : null
-
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
       <StatCard
         icon={FiUsers}
         label="Followers"
@@ -36,16 +31,9 @@ export default function StatsGrid({ org, repos }) {
         color="border-indigo-700/40"
       />
       <StatCard
-        icon={FiUserCheck}
-        label="Members"
-        value={org?.member_count}
-        color="border-violet-700/40"
-      />
-      <StatCard
         icon={FiGitBranch}
-        label="Repositories"
+        label="Public Repositories"
         value={repos?.total}
-        sub={`${repos?.public ?? 0} public · ${privateCount ?? 0} private/internal`}
         color="border-blue-700/40"
       />
       <StatCard
@@ -61,10 +49,9 @@ export default function StatsGrid({ org, repos }) {
         color="border-red-700/40"
       />
       <StatCard
-        icon={FiLock}
-        label="Private / Internal"
-        value={privateCount}
-        sub={`${repos?.archived ?? 0} archived`}
+        icon={FiArchive}
+        label="Archived Public Repositories"
+        value={repos?.archived}
         color="border-emerald-700/40"
       />
     </div>

@@ -184,19 +184,12 @@ function renderStats(org, repos) {
   const grid = el('stats-grid')
   if (!grid) return
 
-  const privateCount = repos ? (repos.private || 0) + (repos.internal || 0) : null
-
   const cards = [
     { label: 'Followers',        value: org?.followers },
-    { label: 'Members',          value: org?.member_count },
-    { label: 'Repositories',     value: repos?.total,
-      sub: repos ? `${repos.public} public · ${privateCount} private/internal` : '',
-      border: 'border-blue-700/40' },
+    { label: 'Public Repositories', value: repos?.total, border: 'border-blue-700/40' },
     { label: 'Total Stars',      value: repos?.total_stars,     icon: '⭐', border: 'border-yellow-700/40' },
-    { label: 'Open Issues', value: repos?.total_public_open_issues, icon: '🐛', border: 'border-red-700/40' },
-    { label: 'Private/Internal', value: privateCount,           icon: '🔒',
-      sub: repos ? `${repos.archived || 0} archived` : '',
-    },
+    { label: 'Public Open Issues', value: repos?.total_public_open_issues, icon: '🐛', border: 'border-red-700/40' },
+    { label: 'Archived Public Repositories', value: repos?.archived, icon: '📦', border: 'border-emerald-700/40' },
   ]
 
   grid.innerHTML = cards.map(c => `
@@ -216,10 +209,8 @@ function renderRepoFilterBtns() {
   if (!container) return
 
   const filters = [
-    { key: 'all',              label: 'All' },
-    { key: 'public',           label: 'Public' },
-    { key: 'private_internal', label: 'Private + Internal' },
-    { key: 'archived',         label: 'Archived' },
+    { key: 'all',      label: 'All Public' },
+    { key: 'archived', label: 'Archived' },
   ]
 
   container.innerHTML = filters.map(f => `
@@ -245,8 +236,6 @@ function getFilteredRepos() {
 
   if (state.repoFilter === 'public') {
     list = list.filter(r => r.visibility === 'public')
-  } else if (state.repoFilter === 'private_internal') {
-    list = list.filter(r => r.visibility === 'private' || r.visibility === 'internal')
   } else if (state.repoFilter === 'archived') {
     list = list.filter(r => r.archived)
   }

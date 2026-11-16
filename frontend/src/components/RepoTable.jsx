@@ -5,12 +5,6 @@ import {
   FiStar,
 } from 'react-icons/fi'
 
-const VISIBILITY_COLORS = {
-  public: 'bg-emerald-900/50 text-emerald-300 border-emerald-700',
-  private: 'bg-red-900/50 text-red-300 border-red-700',
-  internal: 'bg-yellow-900/50 text-yellow-300 border-yellow-700',
-}
-
 function Badge({ label, color }) {
   return (
     <span className={`rounded border px-1.5 py-0.5 text-xs font-medium ${color}`}>
@@ -35,7 +29,6 @@ function SortButton({ field, current, dir, onClick, children }) {
 export default function RepoTable({ repos }) {
   const DEFAULT_VISIBLE_COUNT = 10
   const SHOW_MORE_STEP = 10
-  const [filter, setFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [sortField, setSortField] = useState('pushed_at')
   const [sortDir, setSortDir] = useState('desc')
@@ -52,14 +45,6 @@ export default function RepoTable({ repos }) {
 
   const displayed = useMemo(() => {
     let list = repos ?? []
-
-    if (filter !== 'all') {
-      if (filter === 'private_internal') {
-        list = list.filter((r) => r.visibility === 'private' || r.visibility === 'internal')
-      } else {
-        list = list.filter((r) => r.visibility === filter)
-      }
-    }
 
     if (search) {
       const q = search.toLowerCase()
@@ -79,11 +64,11 @@ export default function RepoTable({ repos }) {
       if (av > bv) return sortDir === 'asc' ? 1 : -1
       return 0
     })
-  }, [repos, filter, search, sortField, sortDir])
+  }, [repos, search, sortField, sortDir])
 
   useEffect(() => {
     setVisibleCount(DEFAULT_VISIBLE_COUNT)
-  }, [filter, search, sortField, sortDir, repos])
+  }, [search, sortField, sortDir, repos])
 
   const visibleRepos = useMemo(
     () => displayed.slice(0, visibleCount),
@@ -114,19 +99,6 @@ export default function RepoTable({ repos }) {
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 min-w-48 rounded-lg border border-slate-600 bg-slate-700 px-3 py-1.5 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
         />
-        {['all', 'public', 'private_internal', 'internal'].map((v) => (
-          <button
-            key={v}
-            onClick={() => setFilter(v)}
-            className={`rounded-lg border px-3 py-1.5 text-xs font-medium capitalize ${
-              filter === v
-                ? 'border-indigo-500 bg-indigo-600 text-white'
-                : 'border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-200'
-            }`}
-          >
-            {v === 'private_internal' ? 'Private + Internal' : v}
-          </button>
-        ))}
       </div>
 
       {/* Table */}

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from ..cache import cache_expires_in_seconds, cache_get, cache_set
 from ..config import settings
+from ..public_data import public_cache_key
 from . import api_queue
 from . import github_service
 from .request_queue import Priority
@@ -18,35 +19,25 @@ def _now_iso() -> str:
 async def warm_cache_if_needed(priority: Priority = Priority.LOW) -> None:
     """Warm the cache with frequently accessed data to reduce API calls"""
     # Check if org data is cached or near expiry
-    org_cache_key = f"org:{settings.github_org}"
+    org_cache_key = public_cache_key("org", settings.github_org)
     if _is_needs_refresh(org_cache_key):
         logger.info("Warming org cache...")
         org_data = await github_service.get_org_details(
             settings.github_org,
             priority=priority,
         )
-        members = await github_service.get_org_members(
-            settings.github_org,
-            priority=priority,
-        )
         from ..routers.org import _build_result as _build_org_result
 
-        result = _build_org_result(org_data, members)
+        result = _build_org_result(org_data)
         result["is_placeholder"] = False
         result["refreshed_at"] = _now_iso()
         cache_set(org_cache_key, result, settings.org_cache_ttl_seconds)
 
     # Check if repos data is cached or near expiry
-    repos_cache_key = f"repos:{settings.github_org}"
+    repos_cache_key = public_cache_key("repos", settings.github_org)
     if _is_needs_refresh(repos_cache_key):
         logger.info("Queueing incremental repos refresh...")
         api_queue.enqueue_org_repos(settings.github_org)
-
-    if settings.member_wide_mode_enabled:
-        member_cache_key = f"member_wide_stats:{settings.github_org}"
-        if _is_needs_refresh(member_cache_key):
-            logger.info("Queueing member-wide stats refresh...")
-            api_queue.enqueue_member_wide_stats(settings.github_org)
 
     logger.info("Cache warming completed successfully")
 
