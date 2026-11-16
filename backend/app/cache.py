@@ -18,10 +18,29 @@ def _db_path() -> Path:
     return backend_root / configured
 
 
+def _connect() -> sqlite3.Connection:
+    # Use autocommit (isolation_level=None) connections for every cache
+    # operation. In the default (legacy) mode, a statement that starts a
+    # write (e.g. the DELETE on cache_get's expired-entry path) holds the
+    # write lock on connection #1 until its transaction is committed at the
+    # context exit - while _increment_stat() runs its UPDATE on a SECOND
+    # connection in the same thread. That second connection waits on the
+    # first connection's own lock until the 5 s busy window expires and
+    # raises OperationalError("database is locked"). The outer context
+    # manager then rolls the DELETE back, so expired entries were never
+    # removed and every endpoint touching them failed permanently (500s)
+    # with stale keys stuck in limbo. With autocommit, each statement
+    # commits immediately, so nested operations can no longer lock each
+    # other out and the expired-path DELETE finally sticks.
+    conn = sqlite3.connect(_db_path(), timeout=15.0, isolation_level=None)
+    conn.execute("PRAGMA busy_timeout = 15000")
+    return conn
+
+
 def _ensure_db() -> None:
     db_path = _db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as conn:
+    with _connect() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(
             """
@@ -63,7 +82,7 @@ def _increment_stat(column: str) -> None:
     if column not in {"hits", "misses"}:
         raise ValueError("Invalid cache stat column")
 
-    with sqlite3.connect(_db_path()) as conn:
+    with _connect() as conn:
         conn.execute(
             f"UPDATE cache_stats SET {column} = {column} + 1 "
             "WHERE id = 1"
@@ -73,7 +92,7 @@ def _increment_stat(column: str) -> None:
 def cache_get(key: str) -> Optional[Any]:
     with _lock:
         _ensure_db()
-        with sqlite3.connect(_db_path()) as conn:
+        with _connect() as conn:
             row = conn.execute(
                 (
                     "SELECT value_json, expires_at "
@@ -102,7 +121,7 @@ def cache_set(key: str, value: Any, ttl_seconds: int = 300) -> None:
         _ensure_db()
         expires_at = (_now() + timedelta(seconds=ttl_seconds)).isoformat()
         now_iso = _now().isoformat()
-        with sqlite3.connect(_db_path()) as conn:
+        with _connect() as conn:
             conn.execute(
                 """
                 INSERT INTO cache_entries(
@@ -161,7 +180,7 @@ def cache_get_or_last_good(
 def cache_clear(key: str | None = None) -> None:
     with _lock:
         _ensure_db()
-        with sqlite3.connect(_db_path()) as conn:
+        with _connect() as conn:
             if key:
                 conn.execute("DELETE FROM cache_entries WHERE key = ?", (key,))
             else:
@@ -171,7 +190,7 @@ def cache_clear(key: str | None = None) -> None:
 def cache_expires_in_seconds(key: str) -> float | None:
     with _lock:
         _ensure_db()
-        with sqlite3.connect(_db_path()) as conn:
+        with _connect() as conn:
             row = conn.execute(
                 "SELECT expires_at FROM cache_entries WHERE key = ?",
                 (key,),
@@ -185,7 +204,7 @@ def cache_expires_in_seconds(key: str) -> float | None:
 def cache_entry_metadata(key: str) -> dict[str, Any] | None:
     with _lock:
         _ensure_db()
-        with sqlite3.connect(_db_path()) as conn:
+        with _connect() as conn:
             row = conn.execute(
                 (
                     "SELECT updated_at, expires_at "
@@ -214,7 +233,7 @@ def cache_stats() -> dict[str, Any]:
     """Return cache hit/miss statistics"""
     with _lock:
         _ensure_db()
-        with sqlite3.connect(_db_path()) as conn:
+        with _connect() as conn:
             row = conn.execute(
                 "SELECT hits, misses FROM cache_stats WHERE id = 1"
             ).fetchone()
@@ -235,7 +254,7 @@ def cache_info() -> dict:
     """Return detailed cache information"""
     with _lock:
         _ensure_db()
-        with sqlite3.connect(_db_path()) as conn:
+        with _connect() as conn:
             size_row = conn.execute(
                 "SELECT COUNT(*) FROM cache_entries"
             ).fetchone()
