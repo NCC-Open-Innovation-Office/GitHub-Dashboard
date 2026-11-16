@@ -96,5 +96,8 @@ def _build_result(repos: list[dict]) -> dict:
         "total_stars": sum(r["stars"] for r in repo_list),
         "total_forks": sum(r["forks"] for r in repo_list),
         "total_open_issues": sum(r["open_issues"] for r in repo_list),
+        "total_public_open_issues": sum(
+            r["open_issues"] for r in repo_list if r["visibility"] == "public"
+        ),
         "languages": dict(language_counts.most_common(10)),
     }

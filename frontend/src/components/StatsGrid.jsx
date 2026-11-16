@@ -56,8 +56,8 @@ export default function StatsGrid({ org, repos }) {
       />
       <StatCard
         icon={FiAlertCircle}
-        label="Open Issues"
-        value={repos?.total_open_issues}
+        label="Public Open Issues"
+        value={repos?.total_public_open_issues}
         color="border-red-700/40"
       />
       <StatCard

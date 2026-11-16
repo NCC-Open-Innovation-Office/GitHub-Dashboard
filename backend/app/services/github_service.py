@@ -321,30 +321,36 @@ async def get_org_events(org: str, priority: Priority = Priority.HIGH) -> list[d
 
 
 async def get_commit_activity(org: str, repos: list[dict], priority: Priority = Priority.HIGH) -> dict:
-    """Return per-repo and aggregated weekly commit activity for the top repos."""
-    top_repos = sorted(repos, key=lambda r: r.get("stargazers_count", 0), reverse=True)[
-        :8
-    ]
+    """Return per-repo and aggregated weekly commit activity for the organization."""
     semaphore = asyncio.Semaphore(3)
 
     async def _fetch(client: httpx.AsyncClient, repo_name: str):
         async with semaphore:
-            try:
+            for attempt in range(3):
                 resp = await request_queue.add_request(
                     priority,
                     client.get,
                     f"{BASE_URL}/repos/{org}/{repo_name}/stats/commit_activity",
                     headers=_headers(),
                 )
+                if resp.status_code == 202 and attempt < 2:
+                    await asyncio.sleep(1)
+                    continue
                 if resp.status_code == 200:
                     return repo_name, resp.json()
-                return repo_name, []
-            except (httpx.HTTPStatusError, httpx.RequestError):
-                return repo_name, []
+                if resp.status_code == 202:
+                    raise RuntimeError(
+                        f"GitHub is still calculating commit activity for {repo_name}"
+                    )
+                resp.raise_for_status()
+                raise RuntimeError(
+                    f"Unexpected response while fetching commit activity for {repo_name}: "
+                    f"HTTP {resp.status_code}"
+                )
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        tasks = [_fetch(client, r["name"]) for r in top_repos]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = [_fetch(client, r["name"]) for r in repos]
+        results = await asyncio.gather(*tasks)
 
     per_repo: dict[str, list] = {}
     weekly_totals: dict[int, int] = {}

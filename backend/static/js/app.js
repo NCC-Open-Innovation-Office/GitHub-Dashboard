@@ -191,10 +191,10 @@ function renderStats(org, repos) {
     { label: 'Members',          value: org?.member_count },
     { label: 'Repositories',     value: repos?.total,
       sub: repos ? `${repos.public} public · ${privateCount} private/internal` : '',
-    },
-    { label: 'Total Stars',      value: repos?.total_stars },
-    { label: 'Open Issues',      value: repos?.total_open_issues },
-    { label: 'Private/Internal', value: privateCount,
+      border: 'border-blue-700/40' },
+    { label: 'Total Stars',      value: repos?.total_stars,     icon: '⭐', border: 'border-yellow-700/40' },
+    { label: 'Open Issues', value: repos?.total_public_open_issues, icon: '🐛', border: 'border-red-700/40' },
+    { label: 'Private/Internal', value: privateCount,           icon: '🔒',
       sub: repos ? `${repos.archived || 0} archived` : '',
     },
   ]
@@ -387,7 +387,7 @@ function renderContributorsChart(data) {
   const container = el('contributors-content')
   if (!container) return
 
-  const top = (data?.contributors || []).slice(0, 10)
+  const top = (data?.contributors || []).slice(0, 25)
   if (!top.length) {
     container.innerHTML = '<p class="text-sm text-slate-500">No contributor data available.</p>'
     return
