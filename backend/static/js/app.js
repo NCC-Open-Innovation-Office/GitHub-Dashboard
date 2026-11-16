@@ -398,7 +398,7 @@ function renderContributorsChart(data) {
       <div class="mb-2 text-xs text-slate-500">
         ${num(data.total_unique_contributors)} contributors · ${num(data.total_contributions)} total contributions
       </div>
-      <div class="flex-1 min-h-[360px]">
+      <div class="contributors-chart-area flex-1 min-h-[360px]">
         <canvas id="contributors-chart"></canvas>
       </div>
     </div>`

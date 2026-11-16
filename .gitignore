@@ -42,3 +42,4 @@ venv/
 # Persistent stats cache database
 backend/data/
 *.db
+.github/instructions/*
