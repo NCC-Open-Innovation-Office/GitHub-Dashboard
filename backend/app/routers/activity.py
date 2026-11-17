@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from ..cache import cache_get_or_last_good, cache_set
 from ..config import settings
-from ..public_data import public_cache_key
+from ..public_data import activity_cache_key
 from ..services import api_queue
 
 router = APIRouter()
@@ -23,11 +23,20 @@ _INTERESTING = {
 
 @router.get("")
 async def get_activity():
-    cache_key = public_cache_key("activity", settings.github_org)
+    cache_key = activity_cache_key(settings.github_org, settings.include_private_activity)
     if cached := cache_get_or_last_good(
         cache_key,
         "Activity data is being refreshed in the background.",
     ):
+        if cached.get("is_placeholder"):
+            status = api_queue.get_queue_status()["jobs"].get(
+                f"activity:{settings.github_org}", {}
+            )
+            if status.get("state") == "failed":
+                cached["warning"] = (
+                    "Activity refresh failed. Check server logs and GitHub token permissions."
+                )
+            api_queue.enqueue_org_events(settings.github_org)
         return cached
 
     api_queue.enqueue_org_events(settings.github_org)
@@ -120,3 +129,45 @@ def _build_result(events: list[dict], public_repo_names: set[str]) -> dict:
         ):
             filtered.append(_format_event(event))
     return {"events": filtered[:50], "total": len(filtered)}
+
+
+def _format_search_results(items: list[dict], org: str, kind: str) -> list[dict]:
+    formatted = []
+    for item in items:
+        if kind == "commits":
+            repo = item["repository"]["full_name"]
+            commit = item["commit"]
+            author = item.get("author") or {}
+            login = author.get("login") or (commit.get("author") or {}).get("name") or "Unknown author"
+            timestamp = commit["committer"]["date"]
+            event_type = "CommitEvent"
+            payload = {"message": commit.get("message", "")[:120]}
+            event_id = f"commit:{repo}:{item['sha']}"
+        else:
+            repo = item["repository_url"].rstrip("/").split("/repos/", 1)[-1]
+            author = item.get("user") or {}
+            login = author.get("login") or "Unknown author"
+            timestamp = item["created_at"]
+            event_type = "PullRequestEvent" if "pull_request" in item else "IssuesEvent"
+            payload = {
+                "action": "opened",
+                "title": item["title"],
+                "number": item["number"],
+                "html_url": item["html_url"],
+            }
+            event_id = f"issue:{repo}:{item['number']}"
+        if repo.split("/", 1)[0].casefold() != org.casefold():
+            continue
+        formatted.append({
+            "id": event_id,
+            "type": event_type,
+            "actor": {
+                "login": login,
+                "avatar_url": author.get("avatar_url"),
+                "url": author.get("html_url"),
+            },
+            "repo": repo,
+            "created_at": timestamp,
+            "payload": payload,
+        })
+    return formatted

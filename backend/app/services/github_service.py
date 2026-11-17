@@ -168,6 +168,82 @@ async def get_org_members(org: str, priority: Priority = Priority.HIGH) -> list[
         )
 
 
+async def get_member_contributions(
+    org: str, priority: Priority = Priority.HIGH
+) -> dict:
+    now = datetime.now(tz=timezone.utc)
+    try:
+        start = now.replace(year=now.year - 1)
+    except ValueError:
+        start = now.replace(year=now.year - 1, day=28)
+    query = """
+        query($org: String!, $after: String, $from: DateTime!, $to: DateTime!) {
+          organization(login: $org) {
+            membersWithRole(first: 50, after: $after) {
+              totalCount
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                login avatarUrl url
+                contributionsCollection(from: $from, to: $to) {
+                  contributionCalendar { totalContributions }
+                }
+              }
+            }
+          }
+        }
+    """
+    members = []
+    seen_logins = set()
+    cursor = None
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        while True:
+            response = await request_queue.add_request(
+                priority,
+                client.post,
+                f"{BASE_URL}/graphql",
+                headers=_headers(),
+                json={
+                    "query": query,
+                    "variables": {
+                        "org": org,
+                        "after": cursor,
+                        "from": start.isoformat(),
+                        "to": now.isoformat(),
+                    },
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+            if body.get("errors"):
+                raise RuntimeError(f"GitHub GraphQL contributor query failed: {body['errors']}")
+            organization = body["data"]["organization"]
+            if organization is None:
+                raise RuntimeError(f"GitHub organization {org} is not accessible to the token")
+            connection = organization["membersWithRole"]
+            for member in connection["nodes"]:
+                login = member["login"]
+                if login.casefold() in seen_logins:
+                    raise RuntimeError("GitHub returned duplicate organization members")
+                seen_logins.add(login.casefold())
+                members.append({
+                    "login": login,
+                    "avatar_url": member["avatarUrl"],
+                    "html_url": member["url"],
+                    "contributions": member["contributionsCollection"]
+                    ["contributionCalendar"]["totalContributions"],
+                })
+            page = connection["pageInfo"]
+            if not page["hasNextPage"]:
+                if len(members) != connection["totalCount"]:
+                    raise RuntimeError("GitHub organization member list changed during pagination")
+                break
+            next_cursor = page["endCursor"]
+            if not next_cursor or next_cursor == cursor:
+                raise RuntimeError("GitHub organization member pagination did not advance")
+            cursor = next_cursor
+    return {"members": members, "from": start.isoformat(), "to": now.isoformat()}
+
+
 async def get_org_repos(org: str, priority: Priority = Priority.HIGH) -> list[dict]:
     async with httpx.AsyncClient(timeout=60.0) as client:
         return await _paginate(
@@ -318,6 +394,51 @@ async def get_org_events(org: str, priority: Priority = Priority.HIGH) -> list[d
         )
         resp.raise_for_status()
         return resp.json()
+
+
+async def search_non_public_activity(
+    org: str, repos: list[dict], priority: Priority = Priority.HIGH
+) -> list[dict]:
+    from ..routers.activity import _format_search_results
+
+    events = []
+    queries = [
+        ("commits", "committer-date", f"org:{org} is:private"),
+        ("issues", "created", f"org:{org} is:private"),
+        ("issues", "created", f"org:{org} is:internal"),
+    ]
+    repo_terms = []
+    for repo in repos:
+        if repo.get("visibility") != "internal" or not repo.get("full_name"):
+            continue
+        term = f"repo:{repo['full_name']}"
+        if repo_terms and len(" ".join([*repo_terms, term])) > 240:
+            queries.append(("commits", "committer-date", " ".join(repo_terms)))
+            repo_terms = []
+        repo_terms.append(term)
+    if repo_terms:
+        queries.append(("commits", "committer-date", " ".join(repo_terms)))
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for kind, sort, query in queries:
+            resp = await request_queue.add_request(
+                priority,
+                client.get,
+                f"{BASE_URL}/search/{kind}",
+                headers=_headers(),
+                params={
+                    "q": query,
+                    "sort": sort,
+                    "order": "desc",
+                    "per_page": 100,
+                },
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            if result.get("incomplete_results"):
+                raise RuntimeError(f"GitHub {kind} search returned incomplete results")
+            events.extend(_format_search_results(result["items"], org, kind))
+    return list({event["id"]: event for event in events}.values())
 
 
 async def get_commit_activity(org: str, repos: list[dict], priority: Priority = Priority.HIGH) -> dict:

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from ..cache import cache_get_or_last_good, cache_set
 from ..config import settings
-from ..public_data import public_cache_key
+from ..public_data import contributors_cache_key
 from ..services import api_queue
 
 router = APIRouter()
@@ -22,11 +22,22 @@ async def get_contributors(mode: str = Query(default="org")):
             detail="Invalid mode. Use 'org' or 'member_wide'.",
         )
 
-    cache_key = public_cache_key("contributors", settings.github_org)
+    cache_key = contributors_cache_key(
+        settings.github_org, settings.member_contribution_leaderboard
+    )
     if cached := cache_get_or_last_good(
         cache_key,
         "Contributor data is being refreshed in the background.",
     ):
+        if cached.get("is_placeholder"):
+            status = api_queue.get_queue_status()["jobs"].get(
+                f"contributors:{settings.github_org}", {}
+            )
+            if status.get("state") == "failed":
+                cached["warning"] = (
+                    "Contributor refresh failed. Check server logs and GitHub token permissions."
+                )
+            api_queue.enqueue_contributors(settings.github_org)
         return cached
 
     api_queue.enqueue_contributors(settings.github_org)

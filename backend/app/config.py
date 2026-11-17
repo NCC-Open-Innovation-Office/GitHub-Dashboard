@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     repos_cache_ttl_seconds: int = 1200    # 20 minutes for repos
     contributors_cache_ttl_seconds: int = 900  # 15 minutes for contributors
     activity_cache_ttl_seconds: int = 300   # 5 minutes for activity
+    include_private_activity: bool = False
+    member_contribution_leaderboard: bool = False
     commit_activity_cache_ttl_seconds: int = (
         600  # 10 minutes for commit activity
     )

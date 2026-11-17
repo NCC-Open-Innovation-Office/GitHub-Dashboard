@@ -7,7 +7,12 @@ from typing import Any, Callable, Coroutine
 
 from ..cache import cache_get, cache_set, cache_set_last_good
 from ..config import settings
-from ..public_data import filter_public_repos, public_cache_key
+from ..public_data import (
+    activity_cache_key,
+    contributors_cache_key,
+    filter_public_repos,
+    public_cache_key,
+)
 from .request_queue import Priority
 from .github_service import (
     get_all_contributors,
@@ -15,8 +20,10 @@ from .github_service import (
     get_org_details,
     get_org_events,
     get_org_members,
+    get_member_contributions,
     get_org_repos_page,
     get_user_repos,
+    search_non_public_activity,
 )
 
 logger = logging.getLogger(__name__)
@@ -276,8 +283,11 @@ async def _refresh_org_repos(org: str, priority: Any = None) -> list[dict]:
             next_url,
             False,
         )
-        asyncio.create_task(_delayed_enqueue(enqueue_contributors, org))
+        if not settings.member_contribution_leaderboard:
+            asyncio.create_task(_delayed_enqueue(enqueue_contributors, org))
         asyncio.create_task(_delayed_enqueue(enqueue_commit_activity, org))
+        if settings.include_private_activity:
+            asyncio.create_task(_delayed_enqueue(enqueue_org_events, org))
         if next_url is None:
             complete = True
             break
@@ -469,7 +479,8 @@ def enqueue_commit_activity(org: str) -> None:
 
 
 def enqueue_contributors(org: str) -> None:
-    enqueue_org_repos(org)
+    if not settings.member_contribution_leaderboard:
+        enqueue_org_repos(org)
     key = f"contributors:{org}"
     enqueue_unique(
         key,
@@ -548,9 +559,19 @@ async def _refresh_activity(org: str) -> dict:
     from ..routers.activity import _build_result
 
     result = _build_result(events, public_repo_names)
+    if settings.include_private_activity:
+        non_public = await search_non_public_activity(org, repos)
+        combined = result["events"] + non_public
+        combined.sort(key=lambda event: event["created_at"] or "", reverse=True)
+        result["events"] = combined[:50]
+        result["total"] += len(non_public)
+        if not _repo_progress(org).get("complete") or len(repos) >= settings.max_repos:
+            result["warning"] = (
+                "Internal commit activity is based on a partial repository scan."
+            )
     result["is_placeholder"] = False
     result["refreshed_at"] = _now_iso()
-    activity_key = public_cache_key("activity", org)
+    activity_key = activity_cache_key(org, settings.include_private_activity)
     cache_set(activity_key, result, settings.activity_cache_ttl_seconds)
     cache_set_last_good(
         activity_key,
@@ -563,6 +584,30 @@ async def _refresh_activity(org: str) -> dict:
 
 async def _refresh_contributors(org: str) -> dict:
     job_key = f"contributors:{org}"
+    if settings.member_contribution_leaderboard:
+        _mark_job_step(job_key, "fetching_member_contributions")
+        data = await get_member_contributions(org)
+        members = data["members"]
+        ranked = sorted(
+            members,
+            key=lambda member: (-member["contributions"], member["login"].casefold()),
+        )
+        result = {
+            "scope": "member_github_wide",
+            "contributors": ranked[:10],
+            "total_members": len(members),
+            "total_contributions": sum(member["contributions"] for member in members),
+            "period_start": data["from"],
+            "period_end": data["to"],
+            "is_placeholder": False,
+            "refreshed_at": _now_iso(),
+        }
+        cache_key = contributors_cache_key(org, True)
+        cache_set(cache_key, result, settings.contributors_cache_ttl_seconds)
+        cache_set_last_good(cache_key, result, settings.contributors_cache_ttl_seconds)
+        _mark_job_success(job_key, f"members={len(members)}")
+        return result
+
     _mark_job_step(job_key, "loading_repo_sample")
     repos = await _get_or_refresh_raw_repos(org)
     progress = _repo_progress(org)
@@ -592,7 +637,7 @@ async def _refresh_contributors(org: str) -> dict:
         result["warning"] = (
             "Contributor data is based on a partial public repository scan."
         )
-    contributors_key = public_cache_key("contributors", org)
+    contributors_key = contributors_cache_key(org, False)
     cache_set(
         contributors_key,
         result,

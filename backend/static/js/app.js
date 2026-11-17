@@ -17,7 +17,7 @@ const state = {
   repoFilter: 'all',
   repoSort: { field: 'pushed_at', dir: 'desc' },
   // Chart.js instances (destroyed on refresh)
-  charts: { contributors: null, commits: null },
+  charts: { commits: null },
 }
 
 const DEFAULT_VISIBLE_REPOS = 10
@@ -26,6 +26,8 @@ const TV_ROTATION_MS = 30000
 const TV_SECTION_ORDER = ['stats', 'commit', 'repos', 'contributors', 'activity']
 
 const pendingRefreshes = new Set()
+let activityPollTimer = null
+let contributorsPollTimer = null
 
 // ── Utils ─────────────────────────────────────────────────────────────────────
 
@@ -376,66 +378,39 @@ function renderContributorsChart(data) {
   const container = el('contributors-content')
   if (!container) return
 
-  const top = (data?.contributors || []).slice(0, 25)
+  const top = (data?.contributors || []).slice(0, 10)
+  const warning = data?.warning ? `<div role="status">${warningHTML(data.warning)}</div>` : ''
   if (!top.length) {
-    container.innerHTML = '<p class="text-sm text-slate-500">No contributor data available.</p>'
+    container.innerHTML = `${warning}<p class="text-sm text-slate-500">No contributor data available.</p>`
     return
   }
 
-  container.innerHTML = `
-    <div class="flex h-full min-h-0 flex-col gap-3">
-      <div class="mb-2 text-xs text-slate-500">
-        ${num(data.total_unique_contributors)} contributors · ${num(data.total_contributions)} total contributions
-      </div>
-      <div class="contributors-chart-area flex-1 min-h-[360px]">
-        <canvas id="contributors-chart"></canvas>
-      </div>
-    </div>`
-
-  if (state.charts.contributors) {
-    state.charts.contributors.destroy()
-    state.charts.contributors = null
-  }
-
+  const maxContributions = Math.max(...top.map(c => c.contributions), 1)
   const COLORS = ['#6366f1','#8b5cf6','#a78bfa','#c4b5fd','#818cf8','#7c3aed','#4f46e5','#4338ca','#7e22ce','#6d28d9']
 
-  const ctx = el('contributors-chart').getContext('2d')
-  state.charts.contributors = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: top.map(c => c.login),
-      datasets: [{
-        data: top.map(c => c.contributions),
-        backgroundColor: COLORS.slice(0, top.length),
-        borderRadius: 4,
-      }],
-    },
-    options: {
-      indexAxis: 'y',
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#1e293b',
-          borderColor: '#334155',
-          borderWidth: 1,
-          titleColor: '#94a3b8',
-          bodyColor: '#f1f5f9',
-          callbacks: {
-            label: ctx => ` ${num(ctx.parsed.x)} contributions`,
-          },
-        },
-      },
-      scales: {
-        x: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8', font: { size: 11 } } },
-        y: {
-          grid: { display: false },
-          ticks: { color: '#e2e8f0', font: { size: 12 }, autoSkip: false },
-        },
-      },
-    },
-  })
+  container.innerHTML = `
+    ${warning}<div class="flex h-full min-h-0 flex-col gap-3">
+      <div class="mb-2 text-xs text-slate-500">
+        ${data.scope === 'member_github_wide'
+          ? `${num(data.total_members)} organization members · ${num(data.total_contributions)} GitHub-wide contributions in the last 12 months`
+          : `${num(data.total_unique_contributors)} contributors · ${num(data.total_contributions)} total contributions`}
+      </div>
+      <ol class="space-y-2">
+        ${top.map((contributor, i) => `
+          <li class="flex items-center gap-2 text-xs">
+            ${contributor.avatar_url
+              ? `<img src="${esc(contributor.avatar_url)}" alt="" class="h-6 w-6 shrink-0 rounded-full">`
+              : '<span aria-hidden="true" class="h-6 w-6 shrink-0 rounded-full bg-slate-700"></span>'}
+            ${contributor.html_url
+              ? `<a href="${esc(contributor.html_url)}" target="_blank" rel="noopener noreferrer" class="w-24 shrink-0 truncate text-slate-200 hover:text-indigo-300 hover:underline" title="${esc(contributor.login)}">${esc(contributor.login)}</a>`
+              : `<span class="w-24 shrink-0 truncate text-slate-200" title="${esc(contributor.login)}">${esc(contributor.login)}</span>`}
+            <span aria-hidden="true" class="h-3 min-w-0 flex-1 rounded bg-slate-700">
+              <span class="block h-full rounded" style="width: ${contributor.contributions / maxContributions * 100}%; background-color: ${COLORS[i]}"></span>
+            </span>
+            <span class="shrink-0 text-slate-300">${num(contributor.contributions)}<span class="sr-only"> contributions</span></span>
+          </li>`).join('')}
+      </ol>
+    </div>`
 }
 
 // ── Commit Activity Chart ─────────────────────────────────────────────────────
@@ -508,6 +483,7 @@ function renderCommitActivity(data) {
 // ── Activity Feed ─────────────────────────────────────────────────────────────
 
 const EVENT_ICON = {
+  CommitEvent:            { icon: '⬆', color: 'text-indigo-400',  bg: 'bg-indigo-900/30' },
   PushEvent:              { icon: '⬆', color: 'text-indigo-400',  bg: 'bg-indigo-900/30' },
   PullRequestEvent:       { icon: '↔', color: 'text-violet-400',  bg: 'bg-violet-900/30' },
   IssuesEvent:            { icon: '●', color: 'text-red-400',     bg: 'bg-red-900/30' },
@@ -522,6 +498,8 @@ const EVENT_ICON = {
 function eventSummary(event) {
   const p = event.payload || {}
   switch (event.type) {
+    case 'CommitEvent':
+      return `committed${p.message ? ` — "${p.message}"` : ''}`
     case 'PushEvent':
       return `pushed ${p.commit_count || 1} commit${p.commit_count !== 1 ? 's' : ''} to ${(p.ref || '').replace('refs/heads/', '')}${p.message ? ` — "${p.message}"` : ''}`
     case 'PullRequestEvent':
@@ -548,12 +526,13 @@ function renderActivityFeed(data) {
   if (!container) return
 
   const events = (data?.events || []).slice(0, 10)
+  const warning = data?.warning ? `<div role="status">${warningHTML(data.warning)}</div>` : ''
   if (!events.length) {
-    container.innerHTML = '<p class="text-sm text-slate-500">No recent activity found.</p>'
+    container.innerHTML = `${warning}<p class="text-sm text-slate-500">No recent activity found.</p>`
     return
   }
 
-  container.innerHTML = `<ul class="flex flex-col gap-0.5">
+  container.innerHTML = `${warning}<ul class="flex flex-col gap-0.5">
     ${events.map(event => {
       const cfg = EVENT_ICON[event.type] || { icon: '·', color: 'text-slate-400', bg: 'bg-slate-700/30' }
       const repoName = (event.repo || '').split('/').pop()
@@ -564,10 +543,10 @@ function renderActivityFeed(data) {
           </div>
           <div class="flex-1 min-w-0">
             <div class="flex flex-wrap items-baseline gap-1 text-sm">
-              <a href="${esc(event.actor?.url)}" target="_blank" rel="noopener noreferrer"
-                class="font-semibold text-slate-200 hover:text-indigo-300">
-                ${esc(event.actor?.login)}
-              </a>
+              ${event.actor?.url
+                ? `<a href="${esc(event.actor.url)}" target="_blank" rel="noopener noreferrer"
+                    class="font-semibold text-slate-200 hover:text-indigo-300">${esc(event.actor.login)}</a>`
+                : `<span class="font-semibold text-slate-200">${esc(event.actor?.login)}</span>`}
               <span class="text-slate-400 truncate">${esc(eventSummary(event))}</span>
             </div>
             <div class="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
@@ -630,10 +609,17 @@ async function loadRepos() {
 }
 
 async function loadContributors() {
+  if (contributorsPollTimer !== null) {
+    clearTimeout(contributorsPollTimer)
+    contributorsPollTimer = null
+  }
   try {
     const data = await apiFetch('/contributors')
     state.contributors = data
     renderContributorsChart(data)
+    if (data.is_placeholder) {
+      contributorsPollTimer = setTimeout(loadContributors, 15000)
+    }
     setRefreshButtonVisible('contributors', false)
   } catch (e) {
     setError('contributors-content', `Contributors: ${e.message}`)
@@ -642,10 +628,17 @@ async function loadContributors() {
 }
 
 async function loadActivity() {
+  if (activityPollTimer !== null) {
+    clearTimeout(activityPollTimer)
+    activityPollTimer = null
+  }
   try {
     const data = await apiFetch('/activity')
     state.activity = data
     renderActivityFeed(data)
+    if (data.is_placeholder) {
+      activityPollTimer = setTimeout(loadActivity, 15000)
+    }
     setRefreshButtonVisible('activity', false)
   } catch (e) {
     setError('activity-content', `Activity: ${e.message}`)

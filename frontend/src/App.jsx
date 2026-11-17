@@ -246,12 +246,12 @@ export default function App() {
 
               <div className="col-span-4 flex flex-col gap-4 overflow-hidden">
                 <Section
-                  title="Top Contributors"
+                  title="Top 10 Contributors"
                   loading={contributors.loading}
                   error={contributors.error}
                   onRefresh={() => contributors.reload(refreshContributors)}
                   refreshing={contributors.loading}
-                  className="flex flex-col"
+                  className="min-h-0 flex flex-col overflow-auto"
                   highlighted={focusedTvSection === 'contributors'}
                 >
                   <ContributorsChart data={contributors.data} />
@@ -343,7 +343,7 @@ export default function App() {
           </div>
 
           <Section
-            title="Top Contributors"
+            title="Top 10 Contributors"
             loading={contributors.loading}
             error={contributors.error}
             onRefresh={() => contributors.reload(refreshContributors)}

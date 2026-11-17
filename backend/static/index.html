@@ -62,7 +62,6 @@
     .tv-mode #activity-section { grid-column: 2; grid-row: 3; }
     .tv-mode #commit-section, .tv-mode #repos-section,
     .tv-mode #contributors-section, .tv-mode #activity-section { min-height: 0; overflow: auto; }
-    .tv-mode .contributors-chart-area { min-height: 240px; }
     .tv-mode .tv-scroll { min-height: 0; overflow: auto; }
     .tv-mode .tv-focus {
       box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.35), 0 12px 30px rgba(15, 23, 42, 0.6);
@@ -132,7 +131,7 @@
       <!-- Contributors -->
       <div id="contributors-section" class="rounded-xl border border-slate-700 bg-slate-800/60 p-5 flex flex-col">
         <div class="mb-4 flex items-center justify-between">
-          <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Top Contributors</h2>
+          <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Top 10 Contributors</h2>
         </div>
         <div id="contributors-content" class="tv-scroll flex-1 min-h-0"><div class="loader py-12"></div></div>
       </div>
@@ -160,7 +159,7 @@
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-  <script src="/static/js/app.js?v=20261116a"></script>
+  <script src="/static/js/app.js?v=20261116d"></script>
 
   </div>
   </div>

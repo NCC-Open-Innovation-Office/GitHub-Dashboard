@@ -10,6 +10,7 @@ import {
 } from 'react-icons/fi'
 
 const EVENT_CONFIG = {
+  CommitEvent: { icon: FiGitCommit, color: 'text-indigo-400', bg: 'bg-indigo-900/30' },
   PushEvent: { icon: FiGitCommit, color: 'text-indigo-400', bg: 'bg-indigo-900/30' },
   PullRequestEvent: { icon: FiGitPullRequest, color: 'text-violet-400', bg: 'bg-violet-900/30' },
   IssuesEvent: { icon: FiAlertCircle, color: 'text-red-400', bg: 'bg-red-900/30' },
@@ -22,6 +23,8 @@ const EVENT_CONFIG = {
 function eventSummary(event) {
   const p = event.payload ?? {}
   switch (event.type) {
+    case 'CommitEvent':
+      return `committed${p.message ? ` — "${p.message}"` : ''}`
     case 'PushEvent':
       return `pushed ${p.commit_count ?? 1} commit${p.commit_count !== 1 ? 's' : ''} to ${p.ref?.replace('refs/heads/', '') ?? '…'}${p.message ? ` — "${p.message}"` : ''}`
     case 'PullRequestEvent':
@@ -49,6 +52,9 @@ export default function ActivityFeed({ data }) {
       <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
         Recent Activity
       </h2>
+      {data?.warning && (
+        <p role="status" className="text-sm text-yellow-300">{data.warning}</p>
+      )}
       {events.length === 0 ? (
         <p className="text-sm text-slate-500">No recent activity found.</p>
       ) : (
@@ -73,14 +79,18 @@ export default function ActivityFeed({ data }) {
 
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-baseline gap-1 text-sm">
-                    <a
-                      href={event.actor?.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-semibold text-slate-200 hover:text-indigo-300"
-                    >
-                      {event.actor?.login}
-                    </a>
+                    {event.actor?.url ? (
+                      <a
+                        href={event.actor.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold text-slate-200 hover:text-indigo-300"
+                      >
+                        {event.actor.login}
+                      </a>
+                    ) : (
+                      <span className="font-semibold text-slate-200">{event.actor?.login}</span>
+                    )}
                     <span className="text-slate-400 truncate">{eventSummary(event)}</span>
                   </div>
                   <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">

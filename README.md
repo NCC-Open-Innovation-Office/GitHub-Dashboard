@@ -5,10 +5,10 @@ A dashboard to show the engagement of students on GitHub at an academic institut
 ## Features
 
 - **Organization Overview**: Real-time stats for the GitHub organization.
-- **Activity Feed**: Track recent events across public repositories.
-- **Contributor Analytics**: Visualize contribution distributions.
+- **Activity Feed**: Track public repository events, with optional private/internal activity for protected deployments.
+- **Contributor Analytics**: See the top 10 contributors and their profile pictures on the home and TV screens.
 - **Commit Trends**: Monitor activity over time.
-- **Public Data Only**: Anonymous dashboard APIs expose public repositories and public-repository-derived metrics only.
+- **Public Data by Default**: Anonymous dashboard APIs expose public data unless restricted activity or the member leaderboard is explicitly enabled.
 - **Optimized for Large Orgs**: Handles organizations with many repositories through efficient caching.
 - **Database-backed Stats Cache**: API responses are served from a local SQLite cache refreshed in the background.
 
@@ -124,6 +124,44 @@ You can also trigger the image build manually from the Actions tab using the
 | `MAX_REPOS` | Max repositories to fetch | 1000 |
 | `STATS_DB_PATH` | SQLite path for persisted stats cache | `data/stats_cache.db` |
 | `STARTUP_FULL_REFRESH` | If true, enqueue full refresh on app startup | `false` |
+| `INCLUDE_PRIVATE_ACTIVITY` | Include private/internal repository activity in the unauthenticated activity API | `false` |
+| `MEMBER_CONTRIBUTION_LEADERBOARD` | Rank organization members by GitHub-wide contribution-calendar totals | `false` |
+
+### Private activity
+
+Only set `INCLUDE_PRIVATE_ACTIVITY=true` after protecting **both** the dashboard
+and `/api/activity` with deployment-level access controls. The application does
+not authenticate visitors. Anyone who can reach the API can see private and
+internal repository names, authors, commit messages, and issue/PR titles.
+The configured GitHub token must have access to those repositories, including
+any required SSO authorization.
+
+The feed combines public events with GitHub search results for commits and
+newly opened issues and pull requests in private and internal repositories.
+Search indexing can be delayed, results are limited to what the token can
+access, commit searches cover only default branches and use commit dates rather
+than push dates, and other private event
+types (such as reviews and releases) are not included. Internal commit searches
+depend on the repository scan and its `MAX_REPOS` limit. Private activity is
+stored in the local SQLite cache; secure the
+cache and its backups as well. Disabling the setting stops serving that cache
+but does not erase it.
+
+### GitHub-wide member leaderboard
+
+Set `MEMBER_CONTRIBUTION_LEADERBOARD=true` only when the dashboard and
+`/api/contributors` are protected by deployment-level access controls. The API
+does not authenticate visitors and this mode can disclose private organization
+membership and activity totals. Secure the SQLite cache and backups; disabling
+the setting stops serving the member cache but does not erase it.
+
+This mode ranks organization members by their GitHub contribution-calendar
+totals for the last 12 months, rather than commits in organization repositories.
+GitHub token permissions and each user's privacy settings can limit the members
+and contributions visible. A classic token needs `read:org` to list private
+members and may require `read:user` and SSO authorization. Contribution
+calendar totals follow GitHub's rules and are not a complete count of all
+possible GitHub activity. The top 10 appear on both home and TV screens.
 
 ## Admin Diagnostics
 
