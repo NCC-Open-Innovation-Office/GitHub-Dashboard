@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     activity_cache_ttl_seconds: int = 300   # 5 minutes for activity
     include_private_activity: bool = False
     member_contribution_leaderboard: bool = False
+    member_contribution_years: int = 5
     commit_activity_cache_ttl_seconds: int = (
         600  # 10 minutes for commit activity
     )

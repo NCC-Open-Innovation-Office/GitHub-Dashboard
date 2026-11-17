@@ -126,6 +126,7 @@ You can also trigger the image build manually from the Actions tab using the
 | `STARTUP_FULL_REFRESH` | If true, enqueue full refresh on app startup | `false` |
 | `INCLUDE_PRIVATE_ACTIVITY` | Include private/internal repository activity in the unauthenticated activity API | `false` |
 | `MEMBER_CONTRIBUTION_LEADERBOARD` | Rank organization members by GitHub-wide contribution-calendar totals | `false` |
+| `MEMBER_CONTRIBUTION_YEARS` | Years of contribution history summed by the member leaderboard | `5` |
 
 ### Private activity
 
@@ -155,8 +156,12 @@ does not authenticate visitors and this mode can disclose private organization
 membership and activity totals. Secure the SQLite cache and backups; disabling
 the setting stops serving the member cache but does not erase it.
 
-This mode ranks organization members by their GitHub contribution-calendar
-totals for the last 12 months, rather than commits in organization repositories.
+This mode ranks organization members by commits over the last
+`MEMBER_CONTRIBUTION_YEARS` years (default 5; GitHub limits each query to one
+year, so larger values cost more API requests). Commits come from each member's
+GitHub profile (public repositories anywhere). When `INCLUDE_PRIVATE_ACTIVITY=true`,
+commits in the organization's private and internal repositories are added; this
+takes several minutes because commit search is limited to 30 requests per minute.
 GitHub token permissions and each user's privacy settings can limit the members
 and contributions visible. A classic token needs `read:org` to list private
 members and may require `read:user` and SSO authorization. Contribution

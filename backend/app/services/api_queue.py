@@ -12,6 +12,8 @@ from ..public_data import (
     contributors_cache_key,
     filter_public_repos,
     public_cache_key,
+    repos_cache_key,
+    commit_activity_cache_key,
 )
 from .request_queue import Priority
 from .github_service import (
@@ -30,10 +32,9 @@ logger = logging.getLogger(__name__)
 
 MAX_CALLS_PER_BATCH = 1000
 BATCH_INTERVAL = 15 * 60
-JOB_TIMEOUT_SECONDS = 30 * 60
+JOB_TIMEOUT_SECONDS = 60 * 60
 REPO_PAGES_PER_JOB = 5
 CONTRIBUTOR_REPO_SAMPLE = 150
-COMMIT_ACTIVITY_REPO_SAMPLE = 200
 MEMBER_WIDE_CONCURRENCY = 6
 
 
@@ -180,14 +181,14 @@ def _cache_repo_snapshot(
 ) -> None:
     from ..routers.repos import _build_result
 
-    result = _build_result(repos)
+    result = _build_result(repos, settings.include_private_activity)
     result["is_placeholder"] = not complete
     result["refreshed_at"] = _now_iso()
     if not complete:
-        result["warning"] = "Public repository data is being refreshed."
+        result["warning"] = "Repository data is being refreshed."
 
     cache_set(f"raw_repos:{org}", repos, settings.repos_cache_ttl_seconds)
-    repos_key = public_cache_key("repos", org)
+    repos_key = repos_cache_key(org, settings.include_private_activity)
     cache_set(repos_key, result, settings.repos_cache_ttl_seconds)
     cache_set_last_good(
         repos_key,
@@ -565,10 +566,6 @@ async def _refresh_activity(org: str) -> dict:
         combined.sort(key=lambda event: event["created_at"] or "", reverse=True)
         result["events"] = combined[:50]
         result["total"] += len(non_public)
-        if not _repo_progress(org).get("complete") or len(repos) >= settings.max_repos:
-            result["warning"] = (
-                "Internal commit activity is based on a partial repository scan."
-            )
     result["is_placeholder"] = False
     result["refreshed_at"] = _now_iso()
     activity_key = activity_cache_key(org, settings.include_private_activity)
@@ -597,6 +594,7 @@ async def _refresh_contributors(org: str) -> dict:
             "contributors": ranked[:10],
             "total_members": len(members),
             "total_contributions": sum(member["contributions"] for member in members),
+            "period_years": settings.member_contribution_years,
             "period_start": data["from"],
             "period_end": data["to"],
             "is_placeholder": False,
@@ -635,7 +633,7 @@ async def _refresh_contributors(org: str) -> dict:
     }
     if not complete:
         result["warning"] = (
-            "Contributor data is based on a partial public repository scan."
+            "Contributor data is based on a partial repository scan."
         )
     contributors_key = contributors_cache_key(org, False)
     cache_set(
@@ -657,27 +655,13 @@ async def _refresh_contributors(org: str) -> dict:
 
 async def _refresh_commit_activity(org: str) -> dict:
     job_key = f"commit_activity:{org}"
-    _mark_job_step(job_key, "loading_repo_sample")
-    repos = await _get_or_refresh_raw_repos(org)
-    progress = _repo_progress(org)
-    sample_repos = sorted(
-        filter_public_repos(repos),
-        key=lambda repo: repo.get("pushed_at") or "",
-        reverse=True,
-    )[:COMMIT_ACTIVITY_REPO_SAMPLE]
-    _mark_job_step(
-        job_key,
-        "fetching_commit_activity",
-        f"repo_sample_size={len(sample_repos)}",
-    )
-    result = await get_commit_activity(org, sample_repos)
-    complete = bool(progress.get("complete", False))
-    result["repo_sample_size"] = len(sample_repos)
-    result["is_placeholder"] = not complete
+    _mark_job_step(job_key, "fetching_commit_activity")
+    result = await get_commit_activity(org, settings.include_private_activity)
+    result["is_placeholder"] = False
     result["refreshed_at"] = _now_iso()
-    if not complete:
-        result["warning"] = "Commit activity is based on a partial public repository scan."
-    commit_activity_key = public_cache_key("commit_activity", org)
+    commit_activity_key = commit_activity_cache_key(
+        org, settings.include_private_activity
+    )
     cache_set(
         commit_activity_key,
         result,
@@ -688,10 +672,7 @@ async def _refresh_commit_activity(org: str) -> dict:
         result,
         settings.commit_activity_cache_ttl_seconds,
     )
-    _mark_job_success(
-        job_key,
-        f"repo_sample_size={len(sample_repos)}, repo_scan_complete={complete}",
-    )
+    _mark_job_success(job_key, f"days={len(result['aggregated'])}")
     return result
 
 

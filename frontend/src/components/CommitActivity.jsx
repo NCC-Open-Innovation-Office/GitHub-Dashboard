@@ -25,7 +25,7 @@ function CustomTooltip({ active, payload, label }) {
 export default function CommitActivity({ data }) {
   const chartData = useMemo(() => {
     return (data?.aggregated ?? []).map((d) => ({
-      week: format(fromUnixTime(d.week), 'MMM d'),
+      date: format(fromUnixTime(d.date), 'MMM d'),
       commits: d.commits,
     }))
   }, [data])
@@ -41,7 +41,7 @@ export default function CommitActivity({ data }) {
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
-          Commit Activity — Last 26 Weeks
+          Commit Activity — Last 30 Days
         </h2>
         <span className="text-xs text-slate-500">
           {totalCommits.toLocaleString()} commits total
@@ -57,7 +57,7 @@ export default function CommitActivity({ data }) {
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
           <XAxis
-            dataKey="week"
+            dataKey="date"
             tick={{ fill: '#94a3b8', fontSize: 10 }}
             axisLine={false}
             tickLine={false}

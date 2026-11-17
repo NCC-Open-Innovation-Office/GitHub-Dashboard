@@ -61,17 +61,17 @@ class PrivateActivityTests(unittest.TestCase):
                 request=httpx.Request("GET", url),
             )
 
-        with patch.object(github_service.request_queue, "add_request", side_effect=request):
+        with patch.object(github_service.request_queue, "add_request", side_effect=request), \
+             patch.object(github_service.asyncio, "sleep", AsyncMock()):
             self.assertEqual(asyncio.run(github_service.search_non_public_activity("test-org", [
                 {"full_name": "test-org/internal", "visibility": "internal"},
                 {"full_name": "test-org/private", "visibility": "private"},
             ])), [])
-        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(calls), 5)
         self.assertEqual({params["q"] for _, params in calls}, {
-            "org:test-org is:private", "org:test-org is:internal", "repo:test-org/internal",
-        })
-        self.assertNotIn(("commits", "org:test-org is:internal"), {
-            (url.rsplit("/", 1)[-1], params["q"]) for url, params in calls
+            "org:test-org is:private",
+            "org:test-org is:private is:issue", "org:test-org is:private is:pull-request",
+            "org:test-org is:internal is:issue", "org:test-org is:internal is:pull-request",
         })
         self.assertEqual({url.rsplit("/", 1)[-1] for url, _ in calls}, {"commits", "issues"})
 
@@ -79,7 +79,8 @@ class PrivateActivityTests(unittest.TestCase):
             200, json={"items": [], "incomplete_results": True},
             request=httpx.Request("GET", "https://api.github.com/search/commits"),
         )
-        with patch.object(github_service.request_queue, "add_request", AsyncMock(return_value=response)):
+        with patch.object(github_service.request_queue, "add_request", AsyncMock(return_value=response)), \
+             patch.object(github_service.asyncio, "sleep", AsyncMock()):
             with self.assertRaisesRegex(RuntimeError, "incomplete"):
                 asyncio.run(github_service.search_non_public_activity("test-org", []))
 
@@ -130,7 +131,7 @@ class PrivateActivityTests(unittest.TestCase):
         search.assert_not_called()
         self.assertEqual(cache_set.call_args.args[0], "public:activity:test-org")
 
-    def test_internal_commit_search_chunks_and_deduplicates(self):
+    def test_non_public_search_deduplicates_and_skips_per_repo_queries(self):
         commit = {
             "repository": {"full_name": "test-org/private"},
             "sha": "abc",
@@ -155,12 +156,10 @@ class PrivateActivityTests(unittest.TestCase):
             {"full_name": f"test-org/internal-{i:03d}", "visibility": "internal"}
             for i in range(20)
         ]
-        with patch.object(github_service.request_queue, "add_request", side_effect=request):
+        with patch.object(github_service.request_queue, "add_request", side_effect=request), \
+             patch.object(github_service.asyncio, "sleep", AsyncMock()):
             result = asyncio.run(github_service.search_non_public_activity("test-org", repos))
-        repo_queries = [query for query in queries if query.startswith("repo:")]
-        self.assertGreater(len(repo_queries), 1)
-        self.assertTrue(all(len(query) <= 240 for query in repo_queries))
-        self.assertEqual(sum(query.count("repo:") for query in repo_queries), 20)
+        self.assertFalse([query for query in queries if query.startswith("repo:")])
         self.assertEqual(len(result), 1)
 
     def test_disabled_route_uses_public_cache_and_failed_placeholder_warns(self):

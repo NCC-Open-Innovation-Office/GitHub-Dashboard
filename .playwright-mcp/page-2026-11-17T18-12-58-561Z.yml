@@ -1,0 +1,32 @@
+- generic [ref=f1e3]:
+  - navigation [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - generic [ref=f1e6]:
+        - generic [ref=f1e9]: Org Dashboard
+        - generic [ref=f1e10]: / Computer-and-Information-Science
+      - generic [ref=f1e11]: "Auto focus: stats"
+  - main [ref=f1e13]:
+    - generic [ref=f1e15]:
+      - generic [ref=f1e16]:
+        - generic [ref=f1e17]: Followers
+        - paragraph [ref=f1e19]: "70"
+      - generic [ref=f1e20]:
+        - generic [ref=f1e21]: Repositories
+        - paragraph [ref=f1e23]: —
+      - generic [ref=f1e24]:
+        - generic [ref=f1e25]: Total Stars
+        - paragraph [ref=f1e27]: —
+      - generic [ref=f1e28]:
+        - generic [ref=f1e29]: Open Issues
+        - paragraph [ref=f1e31]: —
+      - generic [ref=f1e32]:
+        - generic [ref=f1e33]: Archived Repositories
+        - paragraph [ref=f1e35]: —
+    - heading "Commit Activity — Last 26 Weeks" [level=2] [ref=f1e38]
+    - generic [ref=f1e41]:
+      - generic [ref=f1e42]:
+        - heading "Repositories" [level=2] [ref=f1e44]
+        - textbox "Search repositories…" [ref=f1e46]
+        - paragraph
+      - heading "Top 10 Contributors" [level=2] [ref=f1e51]
+    - heading "Recent Activity" [level=2] [ref=f1e56]

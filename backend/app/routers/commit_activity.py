@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from ..cache import cache_get_or_last_good, cache_set
 from ..config import settings
-from ..public_data import public_cache_key
+from ..public_data import commit_activity_cache_key
 from ..services import api_queue
 
 router = APIRouter()
@@ -11,7 +11,9 @@ router = APIRouter()
 
 @router.get("")
 async def get_commit_activity():
-    cache_key = public_cache_key("commit_activity", settings.github_org)
+    cache_key = commit_activity_cache_key(
+        settings.github_org, settings.include_private_activity
+    )
     if cached := cache_get_or_last_good(
         cache_key,
         "Commit activity is being refreshed in the background.",
@@ -20,7 +22,6 @@ async def get_commit_activity():
 
     api_queue.enqueue_commit_activity(settings.github_org)
     placeholder = {
-        "per_repo": {},
         "aggregated": [],
         "warning": "Commit activity is being refreshed in the background.",
         "is_placeholder": True,

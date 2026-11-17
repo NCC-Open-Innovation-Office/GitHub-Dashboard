@@ -1,5 +1,6 @@
 import asyncio
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -10,6 +11,35 @@ from .request_queue import request_queue, Priority
 BASE_URL = "https://api.github.com"
 _SEMAPHORE_LIMIT = 10  # concurrent requests for contributor fetching
 _REPO_PAGE_TIMEOUT_SECONDS = 120
+
+# Search allows 30 requests per minute and flags bursts as abuse, so every
+# search call goes through one lock and a minimum gap, even across jobs.
+_SEARCH_MIN_INTERVAL = 2.2
+_search_lock = asyncio.Lock()
+_last_search_at = 0.0
+
+
+async def _search(
+    client: httpx.AsyncClient, kind: str, params: dict, priority: Priority
+) -> httpx.Response:
+    global _last_search_at
+    async with _search_lock:
+        for attempt in range(4):
+            wait = _SEARCH_MIN_INTERVAL - (time.monotonic() - _last_search_at)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            resp = await request_queue.add_request(
+                priority,
+                client.get,
+                f"{BASE_URL}/search/{kind}",
+                headers=_headers(),
+                params=params,
+            )
+            _last_search_at = time.monotonic()
+            if resp.status_code in (403, 429) and attempt < 3:
+                await asyncio.sleep(30)
+                continue
+            return resp
 
 
 def _is_bot_login(login: str | None) -> bool:
@@ -168,50 +198,99 @@ async def get_org_members(org: str, priority: Priority = Priority.HIGH) -> list[
         )
 
 
+async def get_member_org_activity_counts(
+    org: str,
+    logins: list[str],
+    since: datetime,
+    priority: Priority = Priority.HIGH,
+) -> dict[str, int]:
+    """Count each member's commits in the org's private and internal repos
+    since the given date. Commit search treats is:private as covering both."""
+    counts = {login: 0 for login in logins}
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for login in logins:
+            resp = await _search(
+                client,
+                "commits",
+                {
+                    "q": f"org:{org} is:private author:{login} "
+                    f"committer-date:>={since.date().isoformat()}",
+                    "per_page": 1,
+                },
+                priority,
+            )
+            resp.raise_for_status()
+            counts[login] += resp.json()["total_count"]
+    return counts
+
+
 async def get_member_contributions(
     org: str, priority: Priority = Priority.HIGH
 ) -> dict:
     now = datetime.now(tz=timezone.utc)
-    try:
-        start = now.replace(year=now.year - 1)
-    except ValueError:
-        start = now.replace(year=now.year - 1, day=28)
+
+    def years_ago(years: int) -> datetime:
+        try:
+            return now.replace(year=now.year - years)
+        except ValueError:
+            return now.replace(year=now.year - years, day=28)
+
+    # GitHub limits each contributionsCollection to one year, so request one
+    # aliased window per year and add them together.
+    years = max(1, settings.member_contribution_years)
+    start = years_ago(years)
+    # Each member costs one contribution collection per year; keep a page
+    # near 40 collections to stay under GitHub's GraphQL resource limits.
+    page_size = max(1, 40 // years)
+    windows = "\n".join(
+        f'y{i}: contributionsCollection(from: "{years_ago(i + 1).isoformat()}", '
+        f'to: "{years_ago(i).isoformat()}") '
+        "{ totalCommitContributions }"
+        for i in range(years)
+    )
     query = """
-        query($org: String!, $after: String, $from: DateTime!, $to: DateTime!) {
+        query($org: String!, $after: String) {
           organization(login: $org) {
-            membersWithRole(first: 50, after: $after) {
+            membersWithRole(first: %d, after: $after) {
               totalCount
               pageInfo { hasNextPage endCursor }
               nodes {
                 login avatarUrl url
-                contributionsCollection(from: $from, to: $to) {
-                  contributionCalendar { totalContributions }
-                }
+                %s
               }
             }
           }
         }
-    """
+    """ % (page_size, windows)
     members = []
     seen_logins = set()
     cursor = None
     async with httpx.AsyncClient(timeout=60.0) as client:
         while True:
-            response = await request_queue.add_request(
-                priority,
-                client.post,
-                f"{BASE_URL}/graphql",
-                headers=_headers(),
-                json={
-                    "query": query,
-                    "variables": {
-                        "org": org,
-                        "after": cursor,
-                        "from": start.isoformat(),
-                        "to": now.isoformat(),
+            for attempt in range(4):
+                response = await request_queue.add_request(
+                    priority,
+                    client.post,
+                    f"{BASE_URL}/graphql",
+                    headers=_headers(),
+                    json={
+                        "query": query,
+                        "variables": {
+                            "org": org,
+                            "after": cursor,
+                        },
                     },
-                },
-            )
+                )
+                # Retry transient 5xx errors and secondary rate limits.
+                if attempt == 3 or not (
+                    response.status_code >= 500 or response.status_code in (403, 429)
+                ):
+                    break
+                retry_after = response.headers.get("retry-after", "")
+                await asyncio.sleep(
+                    int(retry_after) if retry_after.isdigit() else 60
+                    if response.status_code in (403, 429) else 5
+                )
             response.raise_for_status()
             body = response.json()
             if body.get("errors"):
@@ -229,8 +308,10 @@ async def get_member_contributions(
                     "login": login,
                     "avatar_url": member["avatarUrl"],
                     "html_url": member["url"],
-                    "contributions": member["contributionsCollection"]
-                    ["contributionCalendar"]["totalContributions"],
+                    "contributions": sum(
+                        member[f"y{i}"]["totalCommitContributions"]
+                        for i in range(years)
+                    ),
                 })
             page = connection["pageInfo"]
             if not page["hasNextPage"]:
@@ -241,6 +322,14 @@ async def get_member_contributions(
             if not next_cursor or next_cursor == cursor:
                 raise RuntimeError("GitHub organization member pagination did not advance")
             cursor = next_cursor
+    if settings.include_private_activity:
+        # Profile commit counts already include public repositories, so add
+        # only commits in the org's private and internal repositories.
+        counts = await get_member_org_activity_counts(
+            org, [m["login"] for m in members], start, priority
+        )
+        for member in members:
+            member["contributions"] += counts[member["login"]]
     return {"members": members, "from": start.isoformat(), "to": now.isoformat()}
 
 
@@ -402,94 +491,70 @@ async def search_non_public_activity(
     from ..routers.activity import _format_search_results
 
     events = []
+    # Commit search has no is:internal filter, but is:private also matches
+    # commits in internal repositories.
     queries = [
         ("commits", "committer-date", f"org:{org} is:private"),
-        ("issues", "created", f"org:{org} is:private"),
-        ("issues", "created", f"org:{org} is:internal"),
+        *(
+            ("issues", "created", f"org:{org} is:{visibility} is:{item_type}")
+            for visibility in ("private", "internal")
+            for item_type in ("issue", "pull-request")
+        ),
     ]
-    repo_terms = []
-    for repo in repos:
-        if repo.get("visibility") != "internal" or not repo.get("full_name"):
-            continue
-        term = f"repo:{repo['full_name']}"
-        if repo_terms and len(" ".join([*repo_terms, term])) > 240:
-            queries.append(("commits", "committer-date", " ".join(repo_terms)))
-            repo_terms = []
-        repo_terms.append(term)
-    if repo_terms:
-        queries.append(("commits", "committer-date", " ".join(repo_terms)))
-
     async with httpx.AsyncClient(timeout=30.0) as client:
         for kind, sort, query in queries:
-            resp = await request_queue.add_request(
-                priority,
-                client.get,
-                f"{BASE_URL}/search/{kind}",
-                headers=_headers(),
-                params={
-                    "q": query,
-                    "sort": sort,
-                    "order": "desc",
-                    "per_page": 100,
-                },
-            )
-            resp.raise_for_status()
-            result = resp.json()
-            if result.get("incomplete_results"):
-                raise RuntimeError(f"GitHub {kind} search returned incomplete results")
+            # Search can time out and flag results as incomplete; retry briefly.
+            for attempt in range(3):
+                resp = await _search(
+                    client,
+                    kind,
+                    {
+                        "q": query,
+                        "sort": sort,
+                        "order": "desc",
+                        "per_page": 100,
+                    },
+                    priority,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+                if not result.get("incomplete_results"):
+                    break
+                if attempt == 2:
+                    raise RuntimeError(f"GitHub {kind} search returned incomplete results")
+                await asyncio.sleep(2)
             events.extend(_format_search_results(result["items"], org, kind))
     return list({event["id"]: event for event in events}.values())
 
 
-async def get_commit_activity(org: str, repos: list[dict], priority: Priority = Priority.HIGH) -> dict:
-    """Return per-repo and aggregated weekly commit activity for the organization."""
-    semaphore = asyncio.Semaphore(3)
+async def get_commit_activity(
+    org: str,
+    include_private: bool,
+    days: int = 30,
+    priority: Priority = Priority.HIGH,
+) -> dict:
+    """Return daily commit counts for the last ``days`` days (UTC) in the org.
 
-    async def _fetch(client: httpx.AsyncClient, repo_name: str):
-        async with semaphore:
-            for attempt in range(3):
-                resp = await request_queue.add_request(
-                    priority,
-                    client.get,
-                    f"{BASE_URL}/repos/{org}/{repo_name}/stats/commit_activity",
-                    headers=_headers(),
-                )
-                if resp.status_code == 202 and attempt < 2:
-                    await asyncio.sleep(1)
-                    continue
-                if resp.status_code == 200:
-                    return repo_name, resp.json()
-                if resp.status_code == 202:
-                    raise RuntimeError(
-                        f"GitHub is still calculating commit activity for {repo_name}"
-                    )
-                resp.raise_for_status()
-                raise RuntimeError(
-                    f"Unexpected response while fetching commit activity for {repo_name}: "
-                    f"HTTP {resp.status_code}"
-                )
-
+    One commit search per day; search is limited to 30 requests per minute.
+    """
+    today = datetime.now(tz=timezone.utc).date()
+    visibility = "" if include_private else " is:public"
+    aggregated = []
     async with httpx.AsyncClient(timeout=60.0) as client:
-        tasks = [_fetch(client, r["name"]) for r in repos]
-        results = await asyncio.gather(*tasks)
-
-    per_repo: dict[str, list] = {}
-    weekly_totals: dict[int, int] = {}
-
-    for result in results:
-        if not isinstance(result, tuple):
-            continue
-        repo_name, data = result
-        if not isinstance(data, list) or not data:
-            continue
-        per_repo[repo_name] = data
-        for week in data[-26:]:
-            ts: int = week.get("week", 0)
-            weekly_totals[ts] = weekly_totals.get(ts, 0) + week.get("total", 0)
-
-    aggregated = [
-        {"week": ts, "commits": count}
-        for ts, count in sorted(weekly_totals.items())
-    ]
-
-    return {"per_repo": per_repo, "aggregated": aggregated}
+        for offset in range(days - 1, -1, -1):
+            day = today - timedelta(days=offset)
+            resp = await _search(
+                client,
+                "commits",
+                {
+                    "q": f"org:{org}{visibility} committer-date:{day.isoformat()}",
+                    "per_page": 1,
+                },
+                priority,
+            )
+            resp.raise_for_status()
+            midnight = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+            aggregated.append(
+                {"date": int(midnight.timestamp()), "commits": resp.json()["total_count"]}
+            )
+    return {"aggregated": aggregated}

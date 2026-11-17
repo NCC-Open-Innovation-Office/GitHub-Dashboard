@@ -39,10 +39,10 @@ test('production dashboard renders at most ten contributors on home and TV', asy
     context.renderContributorsChart(data)
     assertLeaderboard(container.innerHTML)
     context.renderContributorsChart({
-      ...data, scope: 'member_github_wide', total_members: 12, warning: 'Refresh failed',
+      ...data, scope: 'member_github_wide', total_members: 12, period_years: 5, warning: 'Refresh failed',
     })
     assert.match(container.innerHTML, /12 organization members/)
-    assert.match(container.innerHTML, /GitHub-wide contributions in the last 12 months/)
+    assert.match(container.innerHTML, /commits in the last 5 years/)
     assert.match(container.innerHTML, /Refresh failed/)
     context.renderContributorsChart({
       ...data,
@@ -66,10 +66,10 @@ test('React dashboard renders at most ten contributors and handles empty data', 
     const { default: ContributorsChart } = await server.ssrLoadModule('/src/components/ContributorsChart.jsx')
     assertLeaderboard(renderToStaticMarkup(React.createElement(ContributorsChart, { data })))
     const members = renderToStaticMarkup(React.createElement(ContributorsChart, {
-      data: { ...data, scope: 'member_github_wide', total_members: 12, warning: 'Refresh failed' },
+      data: { ...data, scope: 'member_github_wide', total_members: 12, period_years: 5, warning: 'Refresh failed' },
     }))
     assert.match(members, /12 organization members/)
-    assert.match(members, /GitHub-wide contributions in the last 12 months/)
+    assert.match(members, /commits in the last 5 years/)
     assert.match(members, /Refresh failed/)
     const single = renderToStaticMarkup(React.createElement(ContributorsChart, {
       data: { ...data, contributors: [{ login: '<user>', contributions: 0 }] },

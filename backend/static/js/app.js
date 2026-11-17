@@ -14,7 +14,6 @@ const state = {
   repoVisibleCount: 10,
   // UI
   repoSearch: '',
-  repoFilter: 'all',
   repoSort: { field: 'pushed_at', dir: 'desc' },
   // Chart.js instances (destroyed on refresh)
   charts: { commits: null },
@@ -188,10 +187,9 @@ function renderStats(org, repos) {
 
   const cards = [
     { label: 'Followers',        value: org?.followers },
-    { label: 'Public Repositories', value: repos?.total, border: 'border-blue-700/40' },
+    { label: 'Repositories', value: repos?.total, border: 'border-blue-700/40' },
     { label: 'Total Stars',      value: repos?.total_stars,     icon: '⭐', border: 'border-yellow-700/40' },
-    { label: 'Public Open Issues', value: repos?.total_public_open_issues, icon: '🐛', border: 'border-red-700/40' },
-    { label: 'Archived Public Repositories', value: repos?.archived, icon: '📦', border: 'border-emerald-700/40' },
+    { label: 'Open Issues', value: repos?.total_public_open_issues, icon: '🐛', border: 'border-red-700/40' },
   ]
 
   grid.innerHTML = cards.map(c => `
@@ -204,27 +202,6 @@ function renderStats(org, repos) {
     </div>`).join('')
 }
 
-// ── Repo Filter Buttons ───────────────────────────────────────────────────────
-
-function renderRepoFilterBtns() {
-  const container = el('repo-filter-btns')
-  if (!container) return
-
-  const filters = [
-    { key: 'all',      label: 'All Public' },
-    { key: 'archived', label: 'Archived' },
-  ]
-
-  container.innerHTML = filters.map(f => `
-    <button data-filter="${f.key}"
-      class="filter-btn rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors
-        ${state.repoFilter === f.key
-          ? 'border-indigo-500 bg-indigo-600 text-white'
-          : 'border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-200'}">
-      ${f.label}
-    </button>`).join('')
-}
-
 // ── Repo Table ────────────────────────────────────────────────────────────────
 
 const VISIBILITY_BADGE = {
@@ -235,12 +212,6 @@ const VISIBILITY_BADGE = {
 
 function getFilteredRepos() {
   let list = state.allRepos
-
-  if (state.repoFilter === 'public') {
-    list = list.filter(r => r.visibility === 'public')
-  } else if (state.repoFilter === 'archived') {
-    list = list.filter(r => r.archived)
-  }
 
   if (state.repoSearch) {
     const q = state.repoSearch.toLowerCase()
@@ -351,6 +322,7 @@ function resetRepoVisibleCount() {
 function applyTvMode() {
   if (!state.isTvMode) return
 
+  document.documentElement.classList.add('tv-mode')
   document.body.classList.add('tv-mode')
   const indicator = el('tv-focus-indicator')
   if (indicator) indicator.classList.remove('hidden')
@@ -392,7 +364,7 @@ function renderContributorsChart(data) {
     ${warning}<div class="flex h-full min-h-0 flex-col gap-3">
       <div class="mb-2 text-xs text-slate-500">
         ${data.scope === 'member_github_wide'
-          ? `${num(data.total_members)} organization members · ${num(data.total_contributions)} GitHub-wide contributions in the last 12 months`
+          ? `${num(data.total_members)} organization members · ${num(data.total_contributions)} commits in the last ${data.period_years ?? 1} ${(data.period_years ?? 1) === 1 ? 'year' : 'years'}`
           : `${num(data.total_unique_contributors)} contributors · ${num(data.total_contributions)} total contributions`}
       </div>
       <ol class="space-y-2">
@@ -427,7 +399,7 @@ function renderCommitActivity(data) {
 
   const total = aggregated.reduce((s, d) => s + d.commits, 0)
   container.innerHTML = `
-    <div class="mb-2 flex justify-end text-xs text-slate-500">${num(total)} commits in period</div>
+    <div class="mb-2 flex justify-end text-xs text-slate-500">${num(total)} commits in the last 30 days</div>
     <canvas id="commit-chart" height="80"></canvas>`
 
   if (state.charts.commits) {
@@ -439,7 +411,7 @@ function renderCommitActivity(data) {
   state.charts.commits = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: aggregated.map(d => fmtDate(d.week)),
+      labels: aggregated.map(d => fmtDate(d.date)),
       datasets: [{
         label: 'Commits',
         data: aggregated.map(d => d.commits),
@@ -582,7 +554,6 @@ async function loadRepos() {
   try {
     const data = await apiFetch('/repos')
     state.allRepos = data.repos || []
-    renderRepoFilterBtns()
 
     const warningNode = el('repo-warning')
     if (warningNode) {
@@ -692,16 +663,6 @@ document.addEventListener('click', e => {
       commits:      ['commits', '/commit-activity/refresh',   loadCommitActivity,'commit-activity-content','commits'],
     }
     if (map[key]) refreshSection(...map[key])
-    return
-  }
-
-  // Repo filter buttons
-  const filterBtn = e.target.closest('[data-filter]')
-  if (filterBtn) {
-    state.repoFilter = filterBtn.dataset.filter
-    resetRepoVisibleCount()
-    renderRepoFilterBtns()
-    renderRepoTable()
     return
   }
 

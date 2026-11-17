@@ -19,7 +19,7 @@ export default function ContributorsChart({ data }) {
       {top.length > 0 && (
         <div className="text-xs text-slate-500">
           {data.scope === 'member_github_wide' ? (
-            <>{data.total_members} organization members · {data.total_contributions?.toLocaleString()} GitHub-wide contributions in the last 12 months</>
+            <>{data.total_members} organization members · {data.total_contributions?.toLocaleString()} commits in the last {data.period_years ?? 1} {(data.period_years ?? 1) === 1 ? 'year' : 'years'}</>
           ) : (
             <>{data.total_unique_contributors} unique contributors · {data.total_contributions?.toLocaleString()} total contributions (across all repos)</>
           )}

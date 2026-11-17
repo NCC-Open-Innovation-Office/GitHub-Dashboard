@@ -18,9 +18,9 @@ def graphql_member(login, count):
         "login": login,
         "avatarUrl": f"https://avatars.example/{login}",
         "url": f"https://github.com/{login}",
-        "contributionsCollection": {
-            "contributionCalendar": {"totalContributions": count},
-        },
+        # Spread the count over two yearly windows to exercise summing.
+        "y0": {"totalCommitContributions": count - count // 2},
+        "y1": {"totalCommitContributions": count // 2},
     }
 
 
@@ -37,7 +37,7 @@ def graphql_page(members, total, has_next=False, cursor=None):
 
 
 class MemberContributorsTests(unittest.TestCase):
-    def test_graphql_paginates_all_members_with_one_fixed_year_window(self):
+    def test_graphql_paginates_all_members_and_sums_yearly_windows(self):
         requests = []
         pages = [
             graphql_page([graphql_member("alice", 3)], 2, True, "page-2"),
@@ -45,23 +45,22 @@ class MemberContributorsTests(unittest.TestCase):
         ]
 
         async def request(priority, method, url, **kwargs):
-            requests.append(kwargs["json"]["variables"])
+            requests.append(kwargs["json"])
             return pages.pop(0)
 
-        with patch.object(github_service.request_queue, "add_request", side_effect=request):
+        with patch.object(github_service.settings, "member_contribution_years", 2), \
+             patch.object(github_service.request_queue, "add_request", side_effect=request):
             result = asyncio.run(github_service.get_member_contributions("test-org"))
 
         self.assertEqual([member["login"] for member in result["members"]], ["alice", "bob"])
         self.assertEqual(result["members"][1]["contributions"], 12)
-        self.assertIsNone(requests[0]["after"])
-        self.assertEqual(requests[1]["after"], "page-2")
-        self.assertEqual(requests[0]["from"], requests[1]["from"])
-        self.assertEqual(requests[0]["to"], requests[1]["to"])
+        self.assertIsNone(requests[0]["variables"]["after"])
+        self.assertEqual(requests[1]["variables"]["after"], "page-2")
+        self.assertIn("y1: contributionsCollection", requests[0]["query"])
+        self.assertNotIn("y2:", requests[0]["query"])
         start = datetime.fromisoformat(result["from"])
         end = datetime.fromisoformat(result["to"])
-        self.assertEqual(start.year, end.year - 1)
-        self.assertEqual((start.month, start.hour, start.minute), (end.month, end.hour, end.minute))
-        self.assertEqual(start.day, min(end.day, 28) if end.month == 2 and end.day == 29 else end.day)
+        self.assertEqual(start.year, end.year - 2)
 
     def test_graphql_errors_and_incomplete_pagination_fail(self):
         error = httpx.Response(
@@ -71,6 +70,7 @@ class MemberContributorsTests(unittest.TestCase):
         )
         for response in (error, graphql_page([graphql_member("alice", 3)], 2)):
             with self.subTest(response=response), \
+                 patch.object(github_service.settings, "member_contribution_years", 2), \
                  patch.object(github_service.request_queue, "add_request", AsyncMock(return_value=response)):
                 with self.assertRaises(RuntimeError):
                     asyncio.run(github_service.get_member_contributions("test-org"))

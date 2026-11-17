@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from ..cache import cache_expires_in_seconds, cache_get, cache_set
 from ..config import settings
-from ..public_data import public_cache_key
+from ..public_data import public_cache_key, repos_cache_key
 from . import api_queue
 from . import github_service
 from .request_queue import Priority
@@ -34,8 +34,8 @@ async def warm_cache_if_needed(priority: Priority = Priority.LOW) -> None:
         cache_set(org_cache_key, result, settings.org_cache_ttl_seconds)
 
     # Check if repos data is cached or near expiry
-    repos_cache_key = public_cache_key("repos", settings.github_org)
-    if _is_needs_refresh(repos_cache_key):
+    repos_key = repos_cache_key(settings.github_org, settings.include_private_activity)
+    if _is_needs_refresh(repos_key):
         logger.info("Queueing incremental repos refresh...")
         api_queue.enqueue_org_repos(settings.github_org)
 

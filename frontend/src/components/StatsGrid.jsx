@@ -3,7 +3,6 @@ import {
   FiStar,
   FiGitBranch,
   FiAlertCircle,
-  FiArchive,
 } from 'react-icons/fi'
 
 function StatCard({ icon: Icon, label, value, sub, color }) {
@@ -23,7 +22,7 @@ function StatCard({ icon: Icon, label, value, sub, color }) {
 
 export default function StatsGrid({ org, repos }) {
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
       <StatCard
         icon={FiUsers}
         label="Followers"
@@ -32,7 +31,7 @@ export default function StatsGrid({ org, repos }) {
       />
       <StatCard
         icon={FiGitBranch}
-        label="Public Repositories"
+        label="Repositories"
         value={repos?.total}
         color="border-blue-700/40"
       />
@@ -44,15 +43,9 @@ export default function StatsGrid({ org, repos }) {
       />
       <StatCard
         icon={FiAlertCircle}
-        label="Public Open Issues"
+        label="Open Issues"
         value={repos?.total_public_open_issues}
         color="border-red-700/40"
-      />
-      <StatCard
-        icon={FiArchive}
-        label="Archived Public Repositories"
-        value={repos?.archived}
-        color="border-emerald-700/40"
       />
     </div>
   )

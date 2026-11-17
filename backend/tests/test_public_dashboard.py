@@ -62,6 +62,21 @@ class PublicDashboardTests(unittest.TestCase):
         self.assertNotIn("private", result)
         self.assertNotIn("internal", result)
 
+    def test_restricted_repo_summary_counts_all_repos_but_public_open_issues(self):
+        repos = [
+            {"id": 1, "name": "a", "full_name": "org/a", "visibility": "public",
+             "private": False, "stargazers_count": 2, "open_issues_count": 4},
+            {"id": 2, "name": "b", "full_name": "org/b", "visibility": "private",
+             "private": True, "stargazers_count": 90, "open_issues_count": 50},
+        ]
+        result = build_repos_result(repos, include_private=True)
+
+        self.assertEqual([repo["name"] for repo in result["repos"]], ["a", "b"])
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["total_stars"], 92)
+        self.assertEqual(result["total_open_issues"], 54)
+        self.assertEqual(result["total_public_open_issues"], 4)
+
     def test_activity_is_filtered_to_public_repository_names(self):
         events = [
             {

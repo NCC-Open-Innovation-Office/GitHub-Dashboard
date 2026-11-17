@@ -18,6 +18,9 @@
     .sort-arrow::after { content: '↕'; opacity: 0.3; margin-left: 4px; }
     .sort-asc::after  { content: '↑'; opacity: 1; margin-left: 4px; }
     .sort-desc::after { content: '↓'; opacity: 1; margin-left: 4px; }
+    /* Tailwind sizes are rem-based, so scaling the root size scales the whole
+       dashboard with the 16:9 frame: 16px at 1280x720, 24px at 1920x1080. */
+    html.tv-mode { font-size: min(calc(100vw / 80), calc(100vh * 16 / 9 / 80)); }
     .tv-mode { background: radial-gradient(circle at 20% 20%, #1e293b 0%, #020617 65%); }
     .tv-mode #page-shell {
       min-height: 100vh;
@@ -38,6 +41,7 @@
       flex-direction: column;
     }
     .tv-mode nav { position: static; }
+    .tv-mode nav > div { max-width: none; }
     .tv-mode footer { display: none; }
     .tv-mode #org-header-section { display: none; }
     .tv-mode #dashboard-main {
@@ -55,7 +59,7 @@
     .tv-mode #dashboard-main > * { margin-top: 0; }
     .tv-mode #dashboard-main > .contents { display: contents; }
     .tv-mode #stats-section { grid-column: 1 / span 2; grid-row: 1; }
-    .tv-mode #stats-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .tv-mode #stats-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .tv-mode #commit-section { grid-column: 1; grid-row: 2; }
     .tv-mode #repos-section { grid-column: 1; grid-row: 3; }
     .tv-mode #contributors-section { grid-column: 2; grid-row: 2; }
@@ -97,13 +101,13 @@
 
     <!-- Stats Grid -->
     <div id="stats-section">
-      <div id="stats-grid" class="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5"></div>
+      <div id="stats-grid" class="grid grid-cols-2 gap-4 sm:grid-cols-4"></div>
     </div>
 
     <!-- Commit Activity -->
     <div id="commit-section" class="rounded-xl border border-slate-700 bg-slate-800/60 p-5">
       <div class="mb-4 flex items-center justify-between">
-        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Commit Activity — Last 26 Weeks</h2>
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Commit Activity — Last 30 Days</h2>
       </div>
       <div id="commit-activity-content"><div class="loader py-12"></div></div>
     </div>
@@ -120,7 +124,6 @@
         <div class="mb-3 flex flex-wrap items-center gap-3">
           <input id="repo-search" type="text" placeholder="Search repositories…"
             class="flex-1 min-w-48 rounded-lg border border-slate-600 bg-slate-700 px-3 py-1.5 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-          <div id="repo-filter-btns" class="flex flex-wrap gap-2"></div>
         </div>
         <div id="repo-warning" class="mb-3"></div>
         <div id="repos-table-wrapper" class="tv-scroll"><div class="loader py-12"></div></div>
